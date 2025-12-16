@@ -1,10 +1,97 @@
 import time
 import random
-import pyplAI
+import math
+from copy import deepcopy
+
+# Kaggle does not allow to use pyplAI, so we copy minimax code here
+class Minimax:
+    def __init__(self, aplicar_movimiento, obtener_movimientos, es_estado_final, gana_jugador, heuristica, numeroJugadores, profundidadBusqueda, estadisticas=False):
+        self.aplicar_movimiento = staticmethod(aplicar_movimiento)
+        self.obtener_movimientos = staticmethod(obtener_movimientos)
+        self.es_estado_final = staticmethod(es_estado_final)
+        self.gana_jugador = staticmethod(gana_jugador)
+        self.heuristica = staticmethod(heuristica)
+        self.jugadores = [i+1 for i in range(numeroJugadores)]
+        self.profundidadBusqueda = profundidadBusqueda
+        self.estadisticas = estadisticas
+
+    def evaluate(self,estado,jugadorMax):
+        if(self.es_estado_final(estado)):
+            for jugador in self.jugadores:
+                if(self.gana_jugador(estado,jugador)):
+                    if(jugador==jugadorMax):
+                        return math.inf
+                    else:
+                        return -math.inf
+            return 0
+        return self.heuristica(estado,jugadorMax)
+
+    def minimax(self, estado, depth, movMax, jugadorMax, profundidadBusqueda, alpha, beta, estadosEvaluados):
+        movs = self.obtener_movimientos(estado)
+        score = self.evaluate(estado,jugadorMax)
+        jugador=estado.jugadorActual
+        newEstado=deepcopy(estado)
+
+        if(self.es_estado_final(estado)):
+            return ((score - depth), movMax, estadosEvaluados)
+
+        if(depth<=profundidadBusqueda):
+            if(jugadorMax==jugador):
+                best = -math.inf
+                for i in range(len(movs)):
+                    s = self.aplicar_movimiento(newEstado,movs[i])
+                    value=self.minimax(s, depth+1, movMax, jugadorMax, profundidadBusqueda, alpha, beta, estadosEvaluados+1)
+                    if(value[0]>best):
+                        movMax=movs[i]
+                    best = max(best, value[0])
+                    alpha = max(alpha, best)
+                    newEstado=deepcopy(estado)
+                    estadosEvaluados=value[2]
+                    if (beta <= alpha):
+                        break
+                return (best, movMax, estadosEvaluados)
+            
+            else:
+                best = math.inf
+                for i in range(len(movs)):
+                    s = self.aplicar_movimiento(newEstado,movs[i])
+                    value=self.minimax(s,  depth+1, movMax, jugadorMax, profundidadBusqueda, alpha, beta, estadosEvaluados+1)
+                    best = min(best,value[0])
+                    beta = min(beta, best)
+                    newEstado=deepcopy(estado)
+                    estadosEvaluados=value[2]
+                    if (beta <= alpha):
+                        break
+                return (best, movMax, estadosEvaluados)
+        else:
+            return ((score - depth), movMax, estadosEvaluados)
+
+    def ejecuta(self, estado):
+        t0 = time.time()
+        alpha=-math.inf #Maximizar
+        beta=math.inf #Minimizar
+        jugadorMax = estado.jugadorActual
+        movs = self.obtener_movimientos(estado)
+        newEstado = deepcopy(estado)
+        if(len(movs)==1):
+            return movs[0]
+        elif(len(movs)==0):
+            return None
+        else:
+            valores = self.minimax(newEstado, 0, movs[0], jugadorMax, self.profundidadBusqueda, alpha, beta, 1)
+            mov= valores[1]
+            estadosEvaluados = valores[2]
+        if(self.estadisticas):
+            print("\nTiempo de ejecución: ", time.time()-t0)
+            print("Número de estados evaluados: ", estadosEvaluados)
+        return mov
+
+
 
 # Adapting ConnectX to pyplAI
 PLAYER_NUMBER = 2
 LIMIT_TIME = 1.9
+TOTAL_LIMIT_TIME = time.time() + LIMIT_TIME
 
 class ConnectXState:
     ROWS = 6
@@ -141,27 +228,23 @@ class ConnectXState:
 
         return score
 
-
-
-# pyplAI minimax agent with CONNECT X adapted
+# Agent function that uses Minimax to find the best move for the current player
 def minimax_agent(observation, configuration):
-    
-    total_limit_time = time.time() + LIMIT_TIME
 
     current_board = observation.board
     current_player = observation.mark
         
-    pyplai_state = ConnectXState(current_board, current_player, total_limit_time)
+    pyplai_state = ConnectXState(current_board, current_player, TOTAL_LIMIT_TIME)
 
     start_time = time.time()
     best_move = None
     last_iteration_time = 0.0
 
     for depth in range(1, 5):
-        time_left = total_limit_time - time.time()
+        time_left = TOTAL_LIMIT_TIME - time.time()
 
         if depth > 1:
-            safety_margin = 1.25
+            safety_margin = 1.5
             if time_left < last_iteration_time * safety_margin:
                 break
         
@@ -169,7 +252,7 @@ def minimax_agent(observation, configuration):
 
         try:
             
-            minimax_solver = pyplAI.Minimax(
+            minimax_solver = Minimax(
                 ConnectXState.apply_move,
                 ConnectXState.get_moves, 
                 ConnectXState.is_final_state, 
@@ -191,24 +274,3 @@ def minimax_agent(observation, configuration):
             break
 
     return best_move
-
-
-
-# pyplAI mcts agent with CONNECT X adapted
-def mcts_agent(observation, configuration):
-
-    current_board = observation.board
-    current_player = observation.mark
-    
-    pyplai_state = ConnectXState(current_board, current_player)
-    
-    mcts_solver = pyplAI.MCTS(
-         ConnectXState.apply_move,
-         ConnectXState.get_moves, 
-         ConnectXState.is_final_state, 
-         ConnectXState.wins_player, 
-         PLAYER_NUMBER, 
-         LIMIT_TIME)
-    recommended_move = mcts_solver.ejecuta(pyplai_state)
-    
-    return recommended_move
