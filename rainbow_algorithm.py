@@ -1,6 +1,9 @@
 import os
 import math
+import shutil
 import numpy as np
+from tqdm import tqdm
+from copy import deepcopy
 import gymnasium as gym
 from kaggle_environments import make
 import matplotlib
@@ -63,13 +66,14 @@ class ConnectXGym(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
-        if self.apply_symmetry and self.np_random.random() < 0.5:
-            self.is_mirrored = True
-        else:
-            self.is_mirrored = False
+        self.is_mirrored = (self.apply_symmetry and self.np_random.random() < 0.5)
+
+        self.pair = [None, self.opponent]
 
         if np.random.random() < self.switch_prob:
             self.pair = self.pair[::-1]
+            self.trainer = self.env.train(self.pair)
+        else:
             self.trainer = self.env.train(self.pair)
 
         observation = self.trainer.reset()
@@ -165,8 +169,7 @@ class RainbowCNN(nn.Module):
             nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             
-            nn.Flatten()
-            )
+            nn.Flatten())
 
         self.flatten_dim = 128 * h * w
 
@@ -174,14 +177,12 @@ class RainbowCNN(nn.Module):
         self.value_stream = nn.Sequential(
             NoisyLinear(self.flatten_dim, 512),
             nn.ReLU(),
-            NoisyLinear(512, 1)
-        )
+            NoisyLinear(512, 1))
         
         self.advantage_stream = nn.Sequential(
             NoisyLinear(self.flatten_dim, 512),
             nn.ReLU(),
-            NoisyLinear(512, action_shape)
-        )
+            NoisyLinear(512, action_shape))
 
     def forward(self, obs, state=None, info={}):
         if not isinstance(obs, torch.Tensor):
@@ -258,50 +259,43 @@ def train_self_play():
     buffer = PrioritizedVectorReplayBuffer(total_size=500000, buffer_num=len(train_envs), alpha=0.6, beta=0.4)
 
     train_collector = Collector(policy, train_envs, buffer, exploration_noise=True)
-    test_collector = Collector(policy, test_envs, exploration_noise=True)
+    test_collector = Collector(policy, test_envs, exploration_noise=False)
 
-    print("Prefilling buffer")
+    print("Prefilling buffer...\n")
     train_collector.collect(n_step=20000, random=True, reset_before_collect=True)
 
-    logger = TensorboardLogger(SummaryWriter(log_path))
+    last_updated_epoch = 0
 
-    best_reward = -float('inf')
-    for i in range(1, TOTAL_EPOCHS+1):
-        print(f"\n=== Epoch {i}/{TOTAL_EPOCHS} ===")
+    def train_fn(epoch, env_step):
 
-        if i > 1 and i % UPDATE_OPPONENT_FREQ==1:
-            print("Updating opponent")
+        nonlocal last_updated_epoch
+
+        if (epoch > 1 and epoch % UPDATE_OPPONENT_FREQ == 1 and epoch != last_updated_epoch):
+            tqdm.write("\nUpdating opponent...\n")
             
-            current_policy_copy = copy.deepcopy(policy)
+            last_updated_epoch = epoch
+            
+            current_policy_copy = deepcopy(policy)
             current_policy_copy.eval()
-
             new_opponent_bot = TrainedAgentOpponent(current_policy_copy)
 
-            train_envs = DummyVecEnv([lambda: ConnectXGym(opponent=new_opponent_bot, apply_symmetry=True) for _ in range(10)])
-            train_collector = Collector(policy, train_envs, buffer, exploration_noise=True)
-            train_collector.reset()
-
-        result = algorithm.run_training(OffPolicyTrainerParams(
-                                                training_collector=train_collector, test_collector=None,
-                                                max_epochs=1, epoch_num_steps=20000, batch_size=64, logger=logger,
-                                                collection_step_num_env_steps=20, update_step_num_gradient_steps_per_sample=0.1
-                                            )
-        )
-        
-        print(f"Testing agent after training epoch {i}/{TOTAL_EPOCHS}")
-        test_collector.reset()
-        test_result = test_collector.collect(n_episode=20)
-        
-        current_reward = test_result.returns.mean()
-        current_std = test_result.returns.std()
-
-        print(f"Current reward: {current_reward:.2f} ± {current_std:.2f}")
-        if current_reward > best_reward:
-            best_reward = current_reward
-            torch.save(policy.state_dict(), os.path.join(log_path, "best_rainbow_agent.pth"))
-            print(f"Training agent saved with the new best reward ({best_reward})")
+            for worker in train_envs.workers:
+                worker.env.set_opponent(new_opponent_bot)
     
-    print("Training finished")
+    def test_fn(epoch, env_step):
+        print(f"\r{' ' * shutil.get_terminal_size().columns}\r", end='')
+
+    logger = TensorboardLogger(SummaryWriter(log_path))
+ 
+    result = algorithm.run_training(OffPolicyTrainerParams(
+                                        training_collector=train_collector, test_collector=test_collector, test_step_num_episodes=20,
+                                        max_epochs=TOTAL_EPOCHS, epoch_num_steps=20000, batch_size=64, logger=logger,
+                                        collection_step_num_env_steps=2000, update_step_num_gradient_steps_per_sample=0.1,
+                                        training_fn=train_fn, test_fn=test_fn,
+                                        save_best_fn=lambda policy: torch.save(policy.state_dict(), os.path.join(log_path, "best_rainbow_agent.pth")),
+                                        stop_fn=lambda result: result.returns_stats.mean_reward >= 50))
+    
+    print("\n\nTraining finished")
 
 if __name__ == "__main__":
     train_self_play()
