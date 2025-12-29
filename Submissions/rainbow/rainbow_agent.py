@@ -3,14 +3,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-import random
 import os
 
 
 
 # Noisy Linear Layer
 class NoisyLinear(nn.Module):
-    def __init__(self, in_features, out_features, std_init=0.5):
+    def __init__(self, in_features, out_features, std_init=0.1):
         super(NoisyLinear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -21,8 +20,8 @@ class NoisyLinear(nn.Module):
         self.bias_mu = nn.Parameter(torch.empty(out_features))
         self.bias_sigma = nn.Parameter(torch.empty(out_features))
 
-        self.register_buffer("weight_epsilon", torch.empty(out_features, in_features))
-        self.register_buffer("bias_epsilon", torch.empty(out_features))
+        self.register_buffer("epsilon_in", torch.empty(in_features))
+        self.register_buffer("epsilon_out", torch.empty(out_features))
 
         self.reset_parameters()
         self.reset_noise()
@@ -34,34 +33,38 @@ class NoisyLinear(nn.Module):
         self.weight_sigma.data.fill_(self.std_init / math.sqrt(self.in_features))
 
         self.bias_mu.data.uniform_(-mu_range, mu_range)
-        self.bias_sigma.data.fill_(self.std_init / math.sqrt(self.out_features))
+        self.bias_sigma.data.fill_(self.std_init / math.sqrt(self.in_features))
     
-    def reset_noise(self):
-        epsilon_in = self._scale_noise(self.in_features)
-        epsilon_out = self._scale_noise(self.out_features)
-
-        self.weight_epsilon.copy_(epsilon_out.ger(epsilon_in))
-        self.bias_epsilon.copy_(epsilon_out)
-
     def _scale_noise(self, size):
-        x = torch.randn(size, device=self.weight_mu.device)
+        x = torch.randn(size, device=self.weight_mu.device)     
         return x.sign().mul_(x.abs().sqrt_())
+
+    def reset_noise(self):
+        self.epsilon_in.copy_(self._scale_noise(self.in_features))
+        self.epsilon_out.copy_(self._scale_noise(self.out_features))
 
     def forward(self, x):
         if self.training:
             self.reset_noise()
-            return F.linear(x, self.weight_mu + self.weight_sigma * self.weight_epsilon, 
-                            self.bias_mu + self.bias_sigma * self.bias_epsilon)
+
+        if self.training:
+            weight = self.weight_mu + self.weight_sigma * self.epsilon_out.ger(self.epsilon_in)
+            bias = self.bias_mu + self.bias_sigma * self.epsilon_out
         else:
-            return F.linear(x, self.weight_mu, self.bias_mu)
+            weight = self.weight_mu
+            bias = self.bias_mu
+
+        return F.linear(x, weight, bias)
 
 
 
 # Rainbow CNN (Dueling Architecture + Noisy Linear Layers)
 class RainbowCNN(nn.Module):
-    def __init__(self, state_shape, action_shape, device='cpu'):
+    def __init__(self, state_shape, action_shape, num_atoms=51, device='cpu'):
         super().__init__()
         self.device = device
+        self.action_shape = action_shape
+        self.num_atoms = num_atoms
         c, h, w = state_shape
         
         # Feature Extractor (CNN)
@@ -76,11 +79,11 @@ class RainbowCNN(nn.Module):
         # Dueling Architecture (Value and Advantage streams)
         self.value_stream = nn.Sequential(
             NoisyLinear(self.flatten_dim, 512), nn.ReLU(),
-            NoisyLinear(512, 1))
+            NoisyLinear(512, num_atoms))
         
         self.advantage_stream = nn.Sequential(
             NoisyLinear(self.flatten_dim, 512), nn.ReLU(),
-            NoisyLinear(512, action_shape))
+            NoisyLinear(512, action_shape * num_atoms))
 
     def forward(self, obs, state=None, info={}):
         if not isinstance(obs, torch.Tensor):
@@ -88,20 +91,20 @@ class RainbowCNN(nn.Module):
         
         # Feature Extraction (CNN)
         features = self.conv(obs)
+        batch_size = features.size(0)
         
         # Dueling Architecture
-        value = self.value_stream(features)
-        advantage = self.advantage_stream(features)
-        q_values = value + advantage - advantage.mean(dim=1, keepdim=True)
+        value = self.value_stream(features).view(batch_size, 1, self.num_atoms)
+        advantage = self.advantage_stream(features).view(batch_size, self.action_shape, self.num_atoms)
+        logits = value + advantage - advantage.mean(dim=1, keepdim=True)
 
         # Apply action mask for invalid actions
-        mask = None
-        if "action_mask" in info:
-            mask = info["action_mask"]
-            
-        q_values = apply_mask_to_logits(q_values, mask, self.device)
+        if info is not None and "action_mask" in info:
+            logits = apply_mask_to_logits(logits, info["action_mask"], self.device)
 
-        return q_values, state
+        probs = logits.softmax(dim=2)
+
+        return probs, state
 
 
 
@@ -112,13 +115,17 @@ def apply_mask_to_logits(logits, mask, device):
     
     if not isinstance(mask, torch.Tensor):
         mask = torch.tensor(mask, dtype=torch.bool, device=device)
+    else:
+        mask = mask.to(device)
     
-    huge_negative = torch.tensor(-1e9, device=device)
+    if logits.dim() == 3 and mask.dim() == 2:
+        mask = mask.unsqueeze(-1)
 
-    return torch.where(mask, logits, huge_negative)
 
-def check_winning_move(board, col, mark, config):
-    rows, columns = config.rows, config.columns
+    return torch.where(mask, logits, -100)
+
+def check_winning_move(board, col, mark):
+    rows, columns = board.shape
 
     empty_rows = np.where(board[:, col] == 0)[0]
     if len(empty_rows) == 0:
@@ -150,8 +157,14 @@ DEVICE = 'cpu'
 def load_model():
     global TRAINED_MODEL
 
+    kaggle_path = "/kaggle_simulations/agent/model.pth"
+    
+    if os.path.exists(kaggle_path):
+        model_path = kaggle_path
+    else:
+        model_path = "model.pth"
+
     model = RainbowCNN(state_shape=(3, 6, 7), action_shape=7)
-    model_path = os.path.join(os.path.dirname(__file__), 'best_rainbow_model.pth')
 
     if os.path.exists(model_path):
         try:
@@ -170,20 +183,20 @@ def rainbow_agent(observation, configuration):
     if TRAINED_MODEL is None:
         TRAINED_MODEL = load_model()
     
-    board = np.array(observation['board']).reshape(configuration.rows, configuration.columns)
+    board = np.array(observation.board).reshape(configuration.rows, configuration.columns)
     me = observation.mark
     opponent = 3 - me
     valid_moves = [c for c in range(configuration.columns) if board[0][c] == 0]
     
     # Check for winning move
     for col in valid_moves:
-        if check_winning_move(board, col, me, configuration):
-            return col
+        if check_winning_move(board, col, me):
+            return int(col)
 
     # Check for opponent winning move
     for col in valid_moves:
-        if check_winning_move(board, col, opponent, configuration):
-            return col
+        if check_winning_move(board, col, opponent):
+            return int(col)
 
     # If no winning move, use the trained model to make a move
     net_board = np.copy(board)

@@ -1,4 +1,7 @@
 .vscode
 __pycache__
-files_rainbow_self_play
+files_rainbow
+files_ppo
 final_models
+
+*.pth

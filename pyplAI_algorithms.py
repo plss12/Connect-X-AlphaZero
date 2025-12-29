@@ -202,3 +202,32 @@ def mcts_agent(observation, configuration):
     recommended_move = mcts_solver.ejecuta(pyplai_state)
     
     return recommended_move
+
+
+# Lite minimax agent with CONNECT X adapted for training
+def minimax_lite_agent(observation, configuration):
+    depth = 2
+
+    current_board = observation.board
+    current_player = observation.mark
+        
+    pyplai_state = ConnectXState(current_board, current_player)
+
+    valid_moves = pyplai_state.get_moves()
+    best_move = valid_moves[len(valid_moves)//2] if valid_moves else None
+        
+    minimax_solver = pyplAI.Minimax(
+                    ConnectXState.apply_move,
+                    ConnectXState.get_moves, 
+                    ConnectXState.is_final_state, 
+                    ConnectXState.wins_player, 
+                    ConnectXState.heuristic,
+                    2, 
+                    depth)
+            
+    recommended_move = minimax_solver.ejecuta(pyplai_state)
+
+    if recommended_move is not None:
+        best_move = recommended_move
+
+    return best_move

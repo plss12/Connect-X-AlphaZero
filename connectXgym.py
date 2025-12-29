@@ -105,20 +105,8 @@ class ConnectXGym(gym.Env):
 
         return processed_obs, reward, done, False, info
 
-def apply_mask_to_logits(logits, mask, device):
-
-    if mask is None:
-        return logits
-    
-    if not isinstance(mask, torch.Tensor):
-        mask = torch.tensor(mask, dtype=torch.bool, device=device)
-    
-    huge_negative = torch.tensor(-1e9, device=device)
-
-    return torch.where(mask, logits, huge_negative)
-
-def check_winning_move(self, board, col, mark):
-    rows, columns = self.env_rows, self.env_columns
+def check_winning_move(board, col, mark):
+    rows, columns = board.shape
 
     empty_rows = np.where(board[:, col] == 0)[0]
     if len(empty_rows) == 0:
@@ -141,3 +129,19 @@ def check_winning_move(self, board, col, mark):
             else:
                 count = 0
     return False
+
+def apply_mask_to_logits(logits, mask, device):
+
+    if mask is None:
+        return logits
+    
+    if not isinstance(mask, torch.Tensor):
+        mask = torch.tensor(mask, dtype=torch.bool, device=device)
+    else:
+        mask = mask.to(device)
+    
+    if logits.dim() == 3 and mask.dim() == 2:
+        mask = mask.unsqueeze(-1)
+
+
+    return torch.where(mask, logits, -100)
