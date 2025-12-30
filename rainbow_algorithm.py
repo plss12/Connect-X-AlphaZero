@@ -199,16 +199,16 @@ def train_rainbow_self_play():
     STEP_PER_EPOCH = 20000
     TOTAL_STEPS = TOTAL_EPOCHS * STEP_PER_EPOCH
     STEP_PER_COLLECT = 1000
-    UPDATE_PER_COLLECT = 0.1
+    UPDATE_PER_COLLECT = 0.5
     BATCH_SIZE = 128
-    BUFFER_SIZE = 100000
+    BUFFER_SIZE = 500000
     UPDATE_OPPONENT_FREQ = 5
     TEST_EPISODES = 20
     LR = 5e-5
 
-    NUM_ATOMS = 51
-    V_MIN = -30
-    V_MAX = 30
+    NUM_ATOMS = 101
+    V_MIN = -40
+    V_MAX = 40
     NOISY_STD = 0.5
 
     ALPHA = 0.6
@@ -278,12 +278,12 @@ def train_rainbow_self_play():
             new_net.load_state_dict(torch.load(os.path.join(model_path, "temp_opponent.pth")))
             new_opponent_bot = RainbowAgent(new_net)
 
-            for i in range(6, len(train_envs.workers)):
-                train_envs.workers[i].env.set_opponent(new_opponent_bot)
+            self_play_indexes = [6, 7, 8, 9]
+            index_to_update = self_play_indexes[train_rainbow_self_play.opponent_version % len(self_play_indexes)]
+            train_envs.workers[index_to_update].env.set_opponent(new_opponent_bot)
 
         if env_step % STEP_PER_COLLECT == 0:
-            logger.write("train/hyperparameters", env_step, {"beta": beta})
-            logger.write("train/self_play", env_step, {"opponent_version": train_rainbow_self_play.opponent_version})
+            logger.write("training/env_step", env_step, {"training/beta": beta, "training/opponent_version": train_rainbow_self_play.opponent_version})
     
     def test_fn(epoch, env_step):
         print(f"\r{' ' * shutil.get_terminal_size().columns}\r", end='')

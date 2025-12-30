@@ -162,7 +162,7 @@ def load_model():
     if os.path.exists(kaggle_path):
         model_path = kaggle_path
     else:
-        model_path = "model.pth"
+        model_path = "Submissions/rainbow/model.pth"
 
     model = RainbowCNN(state_shape=(3, 6, 7), action_shape=7)
 

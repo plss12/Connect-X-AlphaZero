@@ -94,11 +94,11 @@ class ConnectXGym(gym.Env):
             else:
                 reward = 0
         else:
-            reward = -0.1
+            reward = -0.5
             if int(real_action) == self.center_col:
-                reward = 0.2
+                reward = 2
             elif int(real_action) in [self.center_col-1, self.center_col+1]:
-                reward = 0.1
+                reward = 1
 
         if info is None: info = {}
         info["action_mask"] = mask

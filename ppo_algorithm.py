@@ -156,13 +156,13 @@ def train_ppo_self_play():
         os.makedirs(model_path)
     
     TOTAL_EPOCHS = 100
-    STEP_PER_EPOCH = 30000
+    STEP_PER_EPOCH = 20000
     STEP_PER_COLLECT = 2000
     UPDATE_PER_COLLECT = 10
-    BATCH_SIZE = 128
+    BATCH_SIZE = 100
     UPDATE_OPPONENT_FREQ = 5
     TEST_EPISODES = 20
-    LR = 2.5e-4
+    LR = 5e-4
 
     train_envs = DummyVectorEnv([lambda: ConnectXGym(opponent='random', apply_symmetry=True),
                                  lambda: ConnectXGym(opponent='random', apply_symmetry=True),
@@ -231,14 +231,13 @@ def train_ppo_self_play():
             new_actor.load_state_dict(torch.load(os.path.join(model_path, "temp_opponent.pth")))
             new_opponent_bot = PPOAgent(new_actor)
 
-            for i in range(6, len(train_envs.workers)):
-                worker = train_envs.workers[i]
-                worker.env.set_opponent(new_opponent_bot)
+            self_play_indexes = [6, 7, 8, 9]
+            index_to_update = self_play_indexes[train_ppo_self_play.opponent_version % len(self_play_indexes)]
+            train_envs.workers[index_to_update].env.set_opponent(new_opponent_bot)
         
         if env_step % STEP_PER_COLLECT == 0:
             current_lr = algorithm.optim._optim.param_groups[0]['lr']
-            logger.write("train/hyperparameters", env_step, {"lr": current_lr})
-            logger.write("train/self_play", env_step, {"opponent_version": train_ppo_self_play.opponent_version})
+            logger.write("training/env_step", env_step, {"training/lr": current_lr, "training/opponent_version": train_ppo_self_play.opponent_version})
     
     def test_fn(epoch, env_step):
         print(f"\r{' ' * shutil.get_terminal_size().columns}\r", end='')
