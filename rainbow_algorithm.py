@@ -137,7 +137,6 @@ class RainbowAgent:
 
     def __call__(self, observation, configuration):
         board = np.array(observation.board).reshape(configuration.rows, configuration.columns)
-
         me = observation.mark
         opponent = 3 - me
         valid_moves = [c for c in range(configuration.columns) if board[0][c] == 0]
@@ -274,9 +273,9 @@ def train_rainbow_self_play():
             
             torch.save(algorithm.policy.model.state_dict(), os.path.join(model_path, "temp_opponent.pth"))
 
-            new_net = RainbowCNN((3, 6, 7), action_shape=7, device=device).to(device)
+            new_net = RainbowCNN((3, 6, 7), action_shape=7, num_atoms=NUM_ATOMS, device=device).to(device)
             new_net.load_state_dict(torch.load(os.path.join(model_path, "temp_opponent.pth")))
-            new_opponent_bot = RainbowAgent(new_net)
+            new_opponent_bot = RainbowAgent(new_net, num_atoms=NUM_ATOMS, v_min=V_MIN, v_max=V_MAX, device=device)
 
             self_play_indexes = [6, 7, 8, 9]
             index_to_update = self_play_indexes[train_rainbow_self_play.opponent_version % len(self_play_indexes)]

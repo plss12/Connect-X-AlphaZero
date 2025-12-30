@@ -131,7 +131,6 @@ def ppo_agent(observation, configuration):
         TRAINED_MODEL = load_model()
 
     board = np.array(observation.board).reshape(configuration.rows, configuration.columns)
-
     me = observation.mark
     opponent = 3 - me
     valid_moves = [c for c in range(configuration.columns) if board[0][c] == 0]

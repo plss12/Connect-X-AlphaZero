@@ -89,19 +89,16 @@ class Critic(nn.Module):
 
 # PPO agent with rules for instant win or loss
 class PPOAgent:
-    def __init__(self, actor, env_rows=6, env_columns=7, device='cuda'):
+    def __init__(self, actor, device='cuda'):
         self.actor = actor
         self.actor.eval()
-        self.env_rows = env_rows
-        self.env_columns = env_columns
         self.device = device
     
     def __call__(self, observation, configuration):
-        board = np.array(observation.board).reshape(self.env_rows, self.env_columns)
-
+        board = np.array(observation.board).reshape(configuration.rows, configuration.columns)
         me = observation.mark
         opponent = 3 - me
-        valid_moves = [c for c in range(self.env_columns) if board[0][c] == 0]
+        valid_moves = [c for c in range(configuration.columns) if board[0][c] == 0]
 
         # Check for winning move
         for col in valid_moves:
@@ -229,7 +226,7 @@ def train_ppo_self_play():
             base_net = FeatureExtractor((3, 6, 7), device).to(device)
             new_actor = Actor(base_net, 7, device=device).to(device)
             new_actor.load_state_dict(torch.load(os.path.join(model_path, "temp_opponent.pth")))
-            new_opponent_bot = PPOAgent(new_actor)
+            new_opponent_bot = PPOAgent(new_actor, device=device)
 
             self_play_indexes = [6, 7, 8, 9]
             index_to_update = self_play_indexes[train_ppo_self_play.opponent_version % len(self_play_indexes)]

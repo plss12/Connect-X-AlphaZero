@@ -121,7 +121,6 @@ def apply_mask_to_logits(logits, mask, device):
     if logits.dim() == 3 and mask.dim() == 2:
         mask = mask.unsqueeze(-1)
 
-
     return torch.where(mask, logits, -100)
 
 def check_winning_move(board, col, mark):
@@ -153,6 +152,12 @@ def check_winning_move(board, col, mark):
 
 TRAINED_MODEL = None
 DEVICE = 'cpu'
+NUM_ATOMS = 101
+V_MIN = -40
+V_MAX = 40
+
+SUPPORT = torch.linspace(V_MIN, V_MAX, NUM_ATOMS).to(DEVICE)
+
 
 def load_model():
     global TRAINED_MODEL
@@ -164,7 +169,7 @@ def load_model():
     else:
         model_path = "Submissions/rainbow/model.pth"
 
-    model = RainbowCNN(state_shape=(3, 6, 7), action_shape=7)
+    model = RainbowCNN(state_shape=(3, 6, 7), action_shape=7, num_atoms=NUM_ATOMS, device=DEVICE)
 
     if os.path.exists(model_path):
         try:
@@ -216,11 +221,12 @@ def rainbow_agent(observation, configuration):
     mask_tensor = torch.tensor(mask_bool, dtype=torch.bool).to(DEVICE).unsqueeze(0)
     
     with torch.no_grad():
-        q_values, _ = TRAINED_MODEL(state_tensor, info={"action_mask": mask_tensor})
-        q_values = q_values.squeeze()
+        logits, _ = TRAINED_MODEL(state_tensor, info={"action_mask": mask_tensor})
+        probs = F.softmax(logits, dim=2)
+        q_values = (probs * SUPPORT).sum(dim=2)
         best_move = int(torch.argmax(q_values).item())
     
     if best_move not in valid_moves:
         best_move = int(np.random.choice(valid_moves))
 
-    return best_move       
+    return best_move
