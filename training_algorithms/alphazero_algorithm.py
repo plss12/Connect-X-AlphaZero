@@ -1,0 +1,85 @@
+import os
+import sys
+from torch.utils.tensorboard import SummaryWriter
+import time
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+from env.connectXalphazero import Connect4Game
+from alphazero.NNet import NNetWrapper as nn
+from alphazero.Trainer import Trainer
+
+# Helper class to use dot notation (args.variable)
+class dotdict(dict):
+    def __getattr__(self, name):
+        return self[name]
+
+# --- HYPERPARAMETER CONFIGURATION ---
+args = dotdict({
+    # 1. Training Configuration (Cycle)
+    'num_iters': 250,           # Number of total generations (Iterations)
+    'num_eps': 50,               # Episodes (games) of Self-Play per iteration
+    'tempThreshold': 15,         # Turns with exploration (temperature=1) before playing seriously
+    'updateThreshold': 0.6,     # % of wins necessary for the new network to replace the old one (0.6 = 60%)
+    'maxlenOfQueue': 200000,     # Maximum number of training examples stored in memory
+    'numItersForTrainExamplesHistory': 20, # Number of past iterations remembered for training
+
+    # 2. MCTS Configuration (Brain)
+    'num_mcts_sims': 100,        # Simulations per move. MORE = Better game, but SLOWER.
+    'cpuct': 2.0,                # Exploration constant
+
+    # 3. Neural Network Configuration (Learning)
+    'lr': 0.001,                 # Learning Rate
+    # 'dropout': 0.3,              # Dropout to prevent overfitting
+    'epochs': 10,                # Number of training epochs for the network in each iteration
+    'batch_size': 64,            # Batch size
+    'cuda': True,                # Use GPU (Change to False if you don't have NVIDIA)
+    'num_channels': 64,          # Network size (convolutional filters)
+
+    # 4. Checkpoint Configuration
+    'checkpoint': './alphazero/files/checkpoints/',     # Folder to save models
+    'load_model': False,         # Load previous model? (Set True to resume)
+    'load_folder_file': ('./alphazero/files/checkpoints/', 'best.pth.tar'), # File to load if load_model=True
+    'arenaCompare': 20,          # Evaluation games (Arena) New vs Old
+})
+
+def main():
+    print("Starting AlphaZero for Connect4...")
+    
+    # 1. Create Game and Neural Network
+    g = Connect4Game()
+    nnet = nn(g, args)
+
+    # 2. Load Checkpoint (If we want to resume)
+    if args.load_model:
+        print(f"Loading checkpoint from {args.load_folder_file}...")
+        nnet.load_checkpoint(args.load_folder_file[0], args.load_folder_file[1])
+    else:
+        print("Starting training from scratch...")
+
+    # 3. Create Summary Writer for TensorBoard
+    run_name = f"run_{int(time.time())}"
+    print(f"Creating TensorBoard...")
+    writer = SummaryWriter(log_dir=f'./alphazero/files/logs/')
+    
+    # 4. Create Trainer
+    c = Trainer(g, nnet, args, writer)
+
+    # 5. Load Training Examples (Memory)
+    if args.load_model:
+        print("Charging training examples history...")
+        c.loadTrainExamples()
+
+    # 6. Training
+    print("Starting the training loop...")
+    c.learn()
+
+    # 7. Close TensorBoard
+    writer.close()
+
+if __name__ == "__main__":
+    # Ensure checkpoint folder exists
+    if not os.path.exists(args.checkpoint):
+        os.makedirs(args.checkpoint)
+        
+    main()

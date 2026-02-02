@@ -19,7 +19,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from connectXgym import ConnectXGym, check_winning_move, apply_mask_to_logits
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+from env.connectXgym import ConnectXGym, check_winning_move, apply_mask_to_logits
 from pyplAI_algorithms import minimax_lite_agent
 
 

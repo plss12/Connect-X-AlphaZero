@@ -1,0 +1,229 @@
+from collections import deque
+from .MCTS import MCTS
+import numpy as np
+from tqdm import tqdm
+import time
+import os
+from pickle import Pickler, Unpickler
+
+class Trainer:
+    def __init__(self, game, nnet, args, writer=None):
+        self.game = game
+        self.nnet = nnet
+        self.pnet = self.nnet.__class__(game, args)  # Previous network
+        self.args = args
+        self.mcts = MCTS(game, nnet, args)
+        self.trainExamplesHistory = []  # Experience buffer
+        self.skipFirstSelfPlay = False  # Useful if loading a trained model
+        self.writer = writer
+
+    def executeEpisode(self):
+        """
+        Executes ONE complete game of Self-Play.
+        """
+        trainExamples = []
+        board = self.game.get_init_board()
+        self.curPlayer = 1
+        episodeStep = 0
+
+        while True:
+            episodeStep += 1
+            # 1. Get canonical board (perspective of the current player)
+            canonicalBoard = self.game.get_canonical_form(board, self.curPlayer)
+            
+            # 2. Calculate temperature
+            # At the beginning we explore (temp=1), then we play seriously (temp=0)
+            temp = int(episodeStep < self.args.tempThreshold)
+
+            # 3. MCTS finds the best move
+            pi = self.mcts.getActionProb(canonicalBoard, temp=temp)
+            
+            # 4. Save data and symmetries (Data Augmentation)
+            sym = self.game.get_symmetries(canonicalBoard, pi)
+            for b, p in sym:
+                trainExamples.append([b, self.curPlayer, p, None])
+
+            # 5. Choose action
+            action = np.random.choice(len(pi), p=pi)
+            board, self.curPlayer = self.game.get_next_state(board, self.curPlayer, action)
+
+            # 6. Game ended?
+            r = self.game.get_game_ended(board, 1)
+            if r != 0:
+                # Propagation of the r (result from player 1's perspective) to all examples in the history
+                return [(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
+
+    def arena(self, pmcts, nmcts):
+        """
+        Compares the old network (pmcts) against the new one (nmcts).
+        They play 'arenaCompare' games.
+        """
+        pwins = 0
+        nwins = 0
+        draws = 0
+        
+        # Function for them to play
+        def play_match(player1_mcts, player2_mcts):
+            # temp=0 to play competitively (deterministic)
+            board = self.game.get_init_board()
+            curPlayer = 1
+            step = 0
+            while True:
+                step += 1
+                canonicalBoard = self.game.get_canonical_form(board, curPlayer)
+                
+                if curPlayer == 1:
+                    pi = player1_mcts.getActionProb(canonicalBoard, temp=0)
+                else:
+                    pi = player2_mcts.getActionProb(canonicalBoard, temp=0)
+                
+                # Choose the best move (argmax)
+                action = np.argmax(pi)
+                
+                # Validate move
+                valids = self.game.get_valid_moves(canonicalBoard)
+                if valids[action] == 0:
+                    print("ERROR: Invalid move selected in Arena")
+                    action = np.random.choice(np.where(valids)[0])
+
+                board, curPlayer = self.game.get_next_state(board, curPlayer, action)
+                r = self.game.get_game_ended(board, 1)
+                
+                if r != 0:
+                    return r * curPlayer # Adjust result to original perspective
+
+        print("Playing Arena...")
+        for _ in tqdm(range(self.args.arenaCompare)):
+            # Half of the games start with the Old network, half with the New one
+            # Game 1: Old (1) vs New (-1)
+            res = play_match(pmcts, nmcts)
+            if res == 1: pwins += 1
+            elif res == -1: nwins += 1
+            else: draws += 1
+            
+            # Game 2: New (1) vs Old (-1)
+            res = play_match(nmcts, pmcts)
+            if res == 1: nwins += 1      # If P1 (New) wins
+            elif res == -1: pwins += 1   # If P2 (Old) wins
+            else: draws += 1
+            
+        return pwins, nwins, draws
+
+    def saveTrainExamples(self, iteration):
+        # Save example
+        folder = self.args.checkpoint
+        if not os.path.exists(folder): os.makedirs(folder)
+        filename = os.path.join(folder, f"checkpoint_{iteration}.examples")
+        with open(filename, "wb+") as f:
+            Pickler(f).dump(self.trainExamplesHistory)
+        
+        # Delete old examples
+        extension = ".examples"
+        files_to_keep = {f"checkpoint_{iteration}.examples", f"checkpoint_{iteration-1}.examples"}
+        for file in os.listdir(folder):
+            if file.endswith(extension) and file not in files_to_keep:
+                os.remove(os.path.join(folder, file))
+    
+    def loadTrainExamples(self):
+        # Looking for the examples file
+        model_name = self.args.load_folder_file[1]
+        exact_examples_file = os.path.join(self.args.load_folder_file[0], model_name + ".examples")
+        
+        file_to_load = ""
+
+        if os.path.isfile(exact_examples_file):
+            print(f"Found exact examples: {exact_examples_file}")
+            file_to_load = exact_examples_file
+        else:
+            print(f"No exact examples found for {model_name}. Looking for the most recent...")
+            
+            folder = self.args.load_folder_file[0]
+            all_files = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(".examples")]
+            checkpoint_files = [f for f in all_files if "checkpoint_" in os.path.basename(f)]
+            
+            if len(checkpoint_files) > 0:
+                newest_file = max(checkpoint_files, key=lambda x: int(os.path.basename(x).split('_')[-1].split('.')[0]))
+                print(f"Using alternative file (newest): {newest_file}")
+                file_to_load = newest_file
+            else:
+                sys.exit("The folder does not contain any checkpoint_*.examples file")
+
+        # Load the chosen file
+        with open(file_to_load, "rb") as f:
+            self.trainExamplesHistory = Unpickler(f).load()
+        
+        # Skip the first self-play if we loaded examples
+        self.skipFirstSelfPlay = True
+        print("Skipping the first self-play to catch up with the loaded examples")
+
+    def learn(self):
+        """
+        Main Training Loop
+        """
+        for i in range(1, self.args.num_iters + 1):
+            print(f'------ Iteration {i}/{self.args.num_iters} ------')
+            
+            # --- PHASE 1: SELF-PLAY ---
+            if not self.skipFirstSelfPlay or i > 1:
+                deque_examples = deque([], maxlen=self.args.maxlenOfQueue)
+                
+                # Play X episodes against itself
+                for _ in tqdm(range(self.args.num_eps), desc="Self Play"):
+                    self.mcts = MCTS(self.game, self.nnet, self.args)  # Reset MCTS
+                    deque_examples += self.executeEpisode()
+
+                # Add to global history
+                self.trainExamplesHistory.append(deque_examples)
+                
+                if len(self.trainExamplesHistory) > self.args.numItersForTrainExamplesHistory:
+                    print(f"Deleting old data (Keeping {self.args.numItersForTrainExamplesHistory} iters)...")
+                    self.trainExamplesHistory.pop(0)
+                
+                # Save backup of examples
+                self.saveTrainExamples(i - 1)
+
+            # Flatten list of examples to train
+            trainExamples = []
+            for e in self.trainExamplesHistory:
+                trainExamples.extend(e)
+            
+            # Shuffle data
+            np.random.shuffle(trainExamples)
+
+            # Save current network in 'temp' to compare later
+            self.nnet.save_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
+            self.pnet.load_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
+            
+            # MCTS for the old network
+            pmcts = MCTS(self.game, self.pnet, self.args)
+
+            # --- PHASE 2: TRAINING ---
+            print("Training Neural Network...")
+            self.nnet.train(trainExamples, self.writer, i)
+            
+            # MCTS for the new network (trained)
+            nmcts = MCTS(self.game, self.nnet, self.args)
+
+            # --- PHASE 3: ARENA (EVALUATION) ---
+            print("EVALUATION: Pitting New Net vs Old Net")
+            pwins, nwins, draws = self.arena(pmcts, nmcts)
+
+            # Update TensorBoard
+            if self.writer:
+                self.writer.add_scalar('Arena/OldNetWins', pwins, i)
+                self.writer.add_scalar('Arena/NewNetWins', nwins, i)
+                self.writer.add_scalar('Arena/Draws', draws, i)
+                self.writer.add_scalar('Arena/WinRateNew', nwins / (nwins + pwins + draws), i)
+                self.writer.add_scalar('Arena/WinRateOld', pwins / (nwins + pwins + draws), i)
+                self.writer.add_scalar('Arena/DrawRate', draws / (nwins + pwins + draws), i)
+
+            print(f"RESULTS: NEW={nwins}, OLD={pwins}, DRAW={draws}")
+
+            # If the new one wins enough, we accept it
+            if pwins + nwins == 0 or float(nwins) / (pwins + nwins) < self.args.updateThreshold:
+                print("REJECTED: The new network is not good enough.")
+                self.nnet.load_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
+            else:
+                print("ACCEPTED: Saving new best network.")
+                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename='best.pth.tar')
+                self.nnet.save_checkpoint(folder=self.args.checkpoint, filename=f'checkpoint_{i}.pth.tar')
