@@ -90,7 +90,7 @@ class Trainer:
                 r = self.game.get_game_ended(board, 1)
                 
                 if r != 0:
-                    return r * curPlayer # Adjust result to original perspective
+                    return r * curPlayer
 
         for _ in tqdm(range(self.args.arenaCompare // 2), desc="Arena"):
             # Half of the games start with the Old network, half with the New one
@@ -226,7 +226,7 @@ class Trainer:
             print(f"RESULTS: NEW={nwins}, OLD={pwins}, DRAW={draws}")
 
             # If the new one wins enough, we accept it
-            if pwins + nwins == 0 or float(nwins) / (pwins + nwins) < self.args.updateThreshold:
+            if (nwins / (pwins + nwins)) < self.args.updateThreshold:
                 print("REJECTED: The new network is not good enough.")
                 self.nnet.load_checkpoint(folder=self.args.checkpoint_folder, filename='temp.pth.tar')
                 self.writer.add_scalar('Arena/Updates', updates, i)

@@ -249,9 +249,13 @@ class MCTS:
         # Get the number of times each action was visited
         counts = [self.Nsa.get((s, a), 0) for a in range(self.game.get_action_size())]
 
+        valid_moves = self.game.get_valid_moves(canonicalBoard)
+
         # Apply temperature
         # Competitive (Deterministic)
         if temp == 0:
+            best_counts = [c if valid else -1 for c, valid in zip(counts, valid_moves)]
+
             bestAs = np.array(np.argwhere(counts == np.max(counts))).flatten()
             bestA = np.random.choice(bestAs)
             probs = [0] * len(counts)
@@ -261,10 +265,16 @@ class MCTS:
         # Exploration (Stochastic)
         # If temp > 0, normalize the visits to obtain a distribution
         counts = [x ** (1. / temp) for x in counts]
+        counts = [c * v for c, v in zip(counts, valid_moves)]
         counts_sum = float(sum(counts))
 
         if counts_sum == 0:
-            return [1/len(counts)] * len(counts)
+            total_valid_moves = np.sum(valid_moves)
+            if total_valid_moves > 0:
+                probs = [1/total_valid_moves if valid else 0 for valid in valid_moves]
+                return probs
+            else:
+                return [1/len(counts)] * len(counts)
 
         probs = [x / counts_sum for x in counts]
         return probs, sims
@@ -289,19 +299,16 @@ class MCTS:
         # Attack: Check if player can win and stop the search if so
         winning_move = self._manual_check_win(canonicalBoard, 1, valid_moves)
         if winning_move is not None:
+            self._update_stats(s, winning_move, 1)
             return -1 
         
         # Defense: Check if player can block opponent from winning and prune the tree if so
         blocking_move = self._manual_check_win(canonicalBoard, -1, valid_moves)
-
         best_act = -1
 
         if blocking_move is not None:
             best_act = blocking_move
 
-            if s not in self.Ns:
-                self.Ns[s] = 0
-        
         else:
             # 3. New leaf -> Expand and backpropagate the nn value 
             if s not in self.Ps:
@@ -352,17 +359,26 @@ class MCTS:
         v = self.args.gamma * v
 
         # 6. Backpropagation -> Update moving average Q = (N*Q + v) / (N+1) and N
+        self._update_stats(s, a, v)
+
+        return -v
+        
+    def _update_stats(self, s, a, v):
+        """
+        Helper function to perform backpropagation (update Qsa and Nsa).
+        """
         if (s, a) in self.Qsa:
+            # Update moving average Q = (N*Q + v) / (N+1) and N
             self.Qsa[(s, a)] = (self.Nsa[(s, a)] * self.Qsa[(s, a)] + v) / (self.Nsa[(s, a)] + 1)
             self.Nsa[(s, a)] += 1
-
         else:
             self.Qsa[(s, a)] = v
             self.Nsa[(s, a)] = 1
-
+        
+        if s not in self.Ns:
+            self.Ns[s] = 0
+        
         self.Ns[s] += 1
-
-        return -v
     
     def _manual_check_win(self, board, player, valid_moves):
         """
