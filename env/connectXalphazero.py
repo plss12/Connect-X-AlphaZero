@@ -73,27 +73,36 @@ class Connect4Game:
         Data Augmentation with horizontal flip
         """
         return [(board, pi), (np.fliplr(board), pi[::-1])]
-
+    
     def _check_win(self, board, player):
-        """Internal logic to check for 4 in a row"""
+        """
+        Internal logic to check for 4 in a row.
+        """
         # Horizontal
         for c in range(self.cols - 3):
             for r in range(self.rows):
-                if board[r][c] == player and board[r][c+1] == player and board[r][c+2] == player and board[r][c+3] == player:
+                if board[r, c] == player and board[r, c+1] == player and \
+                   board[r, c+2] == player and board[r, c+3] == player:
                     return True
+                    
         # Vertical
         for c in range(self.cols):
             for r in range(self.rows - 3):
-                if board[r][c] == player and board[r+1][c] == player and board[r+2][c] == player and board[r+3][c] == player:
+                if board[r, c] == player and board[r+1, c] == player and \
+                   board[r+2, c] == player and board[r+3, c] == player:
                     return True
-        # Diagonal Positive
+                    
+        # Diagonals
         for c in range(self.cols - 3):
+            # Positive Diagonal
             for r in range(self.rows - 3):
-                if board[r][c] == player and board[r+1][c+1] == player and board[r+2][c+2] == player and board[r+3][c+3] == player:
+                if board[r, c] == player and board[r+1, c+1] == player and \
+                   board[r+2, c+2] == player and board[r+3, c+3] == player:
                     return True
-        # Diagonal Negative
-        for c in range(self.cols - 3):
+            # Negative Diagonal
             for r in range(3, self.rows):
-                if board[r][c] == player and board[r-1][c+1] == player and board[r-2][c+2] == player and board[r-3][c+3] == player:
+                if board[r, c] == player and board[r-1, c+1] == player and \
+                   board[r-2, c+2] == player and board[r-3, c+3] == player:
                     return True
+                    
         return False

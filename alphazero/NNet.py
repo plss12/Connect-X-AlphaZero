@@ -109,7 +109,12 @@ class NNetWrapper:
         """
         examples: list of (board, pi, v)
         """
-        optimizer = optim.Adam(self.nnet.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay)
+        # Calculate learning rate for this iteration (Cosine Annealing)
+        progress = (iteration - 1) / (self.args.num_iters - 1)
+        current_lr = self.args.min_lr + (self.args.max_lr - self.args.min_lr) * (1 + np.cos(np.pi * progress)) / 2
+        print(f"Current learning rate: {current_lr}")
+
+        optimizer = optim.Adam(self.nnet.parameters(), lr=current_lr, weight_decay=self.args.weight_decay)
 
         for epoch in range(self.args.epochs):
             self.nnet.train()

@@ -92,7 +92,6 @@ class Trainer:
                 if r != 0:
                     return r * curPlayer # Adjust result to original perspective
 
-        print("Playing Arena...")
         for _ in tqdm(range(self.args.arenaCompare // 2), desc="Arena"):
             # Half of the games start with the Old network, half with the New one
             # Game 1: Old (1) vs New (-1)
@@ -213,7 +212,7 @@ class Trainer:
             nmcts = MCTS(self.game, self.nnet, self.args)
 
             # --- PHASE 3: ARENA (EVALUATION) ---
-            print("EVALUATION: Pitting New Net vs Old Net")
+            print("Facing New Net vs Old Net...")
             pwins, nwins, draws = self.arena(pmcts, nmcts)
 
             # Update TensorBoard

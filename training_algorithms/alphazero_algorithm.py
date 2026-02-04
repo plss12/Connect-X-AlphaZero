@@ -18,10 +18,10 @@ class dotdict(dict):
 args = dotdict({
     # 1. Training Configuration (Cycle)
     'num_iters': 250,            # Number of total generations (Iterations)
-    'num_eps': 50,               # Episodes (games) of Self-Play per iteration
+    'num_eps': 100,              # Episodes (games) of Self-Play per iteration
     'tempThreshold': 10,         # Turns with exploration (temperature=1) before playing seriously
     'updateThreshold': 0.55,     # % of wins necessary for the new network to replace the old one
-    'maxlenOfQueue': 200000,     # Maximum number of training examples stored in memory
+    'maxlenOfQueue': 10000,      # Maximum number of training examples stored in memory
     'numItersForTrainExamplesHistory': 20, # Number of past iterations remembered for training
 
     # 2. MCTS Configuration (Brain)
@@ -30,7 +30,8 @@ args = dotdict({
     'gamma': 0.99,               # Discounting factor for distant future rewards
 
     # 3. Neural Network Configuration (Learning)
-    'lr': 0.001,                 # Learning Rate
+    'max_lr': 0.005,             # Initial Learning Rate
+    'min_lr': 0.0001,            # Final Learning Rate
     'weight_decay': 1e-4,        # L2 Regularization (Weight Decay)
     # 'dropout': 0.3,              # Dropout to prevent overfitting
     'epochs': 10,                # Number of training epochs for the network in each iteration

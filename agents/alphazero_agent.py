@@ -329,31 +329,54 @@ class MCTS:
         return -v
 
 # --- HELPER WINNER FUNCTION ---
-
 def check_winning_move(board, player, config):
     """
     Check if player can win in the next move.
     """
-    valid_moves = [c for c in range(config.columns) if board[0][c] == 0]
-    for col in valid_moves:
-        temp_board = board.copy()
-        row = np.max(np.where(temp_board[:, col] == 0))
-        temp_board[row, col] = player
-        
-        # Check 4 in a row (Horizontal, Vertical, Diagonal)
+    rows = config.rows
+    columns = config.columns
+    
+    valid_cols = np.where(board[0, :] == 0)[0]
+    for col in valid_cols:
+        row = np.max(np.where(board[:, col] == 0))
+
         # Horizontal
-        for r in range(config.rows):
-            for c in range(config.columns - 3):
-                if np.all(temp_board[r, c:c+4] == player): return col
+        c_start = max(0, col - 3)
+        c_end = min(columns, col + 4)
+        count = 0
+        for c in range(c_start, c_end):
+            val = player if c == col else board[row, c]
+            if val == player:
+                count += 1
+                if count == 4: return col
+            else:
+                count = 0
+
         # Vertical
-        for r in range(config.rows - 3):
-            for c in range(config.columns):
-                if np.all(temp_board[r:r+4, c] == player): return col
+        if row + 3 < rows:
+            if np.all(board[row+1:row+4, col] == player):
+                return col
+
         # Diagonals
-        for r in range(config.rows - 3):
-            for c in range(config.columns - 3):
-                if np.all([temp_board[r+i, c+i] == player for i in range(4)]): return col
-                if np.all([temp_board[r+3-i, c+i] == player for i in range(4)]): return col
+        for d_row, d_col in [(1, 1), (1, -1)]:
+            count = 1
+            
+            # Positive direction
+            for i in range(1, 4):
+                r, c = row + i*d_row, col + i*d_col
+                if 0 <= r < rows and 0 <= c < columns and board[r, c] == player:
+                    count += 1
+                else: break
+            
+            # Negative direction
+            for i in range(1, 4):
+                r, c = row - i*d_row, col - i*d_col
+                if 0 <= r < rows and 0 <= c < columns and board[r, c] == player:
+                    count += 1
+                else: break
+            
+            if count >= 4: return col
+
     return None
 
 # --- CONFIGURATION ---
