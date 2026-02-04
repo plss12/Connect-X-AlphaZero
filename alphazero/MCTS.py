@@ -79,6 +79,9 @@ class MCTS:
 
         if blocking_move is not None:
             best_act = blocking_move
+
+            if s not in self.Ns:
+                self.Ns[s] = 0
         
         else:
             # 3. New leaf -> Expand and backpropagate the nn value 

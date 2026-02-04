@@ -77,27 +77,36 @@ class Connect4Game:
         return player * board
 
     def _check_win(self, board, player):
-        """Internal logic to check for 4 in a row"""
+        """
+        Internal logic to check for 4 in a row.
+        """
         # Horizontal
         for c in range(self.cols - 3):
             for r in range(self.rows):
-                if board[r][c] == player and board[r][c+1] == player and board[r][c+2] == player and board[r][c+3] == player:
+                if board[r, c] == player and board[r, c+1] == player and \
+                   board[r, c+2] == player and board[r, c+3] == player:
                     return True
+                    
         # Vertical
         for c in range(self.cols):
             for r in range(self.rows - 3):
-                if board[r][c] == player and board[r+1][c] == player and board[r+2][c] == player and board[r+3][c] == player:
+                if board[r, c] == player and board[r+1, c] == player and \
+                   board[r+2, c] == player and board[r+3, c] == player:
                     return True
-        # Diagonal Positive
+                    
+        # Diagonals
         for c in range(self.cols - 3):
+            # Positive Diagonal
             for r in range(self.rows - 3):
-                if board[r][c] == player and board[r+1][c+1] == player and board[r+2][c+2] == player and board[r+3][c+3] == player:
+                if board[r, c] == player and board[r+1, c+1] == player and \
+                   board[r+2, c+2] == player and board[r+3, c+3] == player:
                     return True
-        # Diagonal Negative
-        for c in range(self.cols - 3):
+            # Negative Diagonal
             for r in range(3, self.rows):
-                if board[r][c] == player and board[r-1][c+1] == player and board[r-2][c+2] == player and board[r-3][c+3] == player:
+                if board[r, c] == player and board[r-1, c+1] == player and \
+                   board[r-2, c+2] == player and board[r-3, c+3] == player:
                     return True
+                    
         return False
 
 # --- NEURAL NETWORK ---
@@ -241,8 +250,7 @@ class MCTS:
         counts = [self.Nsa.get((s, a), 0) for a in range(self.game.get_action_size())]
 
         # Apply temperature
-        # temp=1: Exploration (Stochastic)
-        # temp=0: Competitive (Deterministic)
+        # Competitive (Deterministic)
         if temp == 0:
             bestAs = np.array(np.argwhere(counts == np.max(counts))).flatten()
             bestA = np.random.choice(bestAs)
@@ -250,9 +258,14 @@ class MCTS:
             probs[bestA] = 1
             return probs, sims
 
+        # Exploration (Stochastic)
         # If temp > 0, normalize the visits to obtain a distribution
         counts = [x ** (1. / temp) for x in counts]
         counts_sum = float(sum(counts))
+
+        if counts_sum == 0:
+            return [1/len(counts)] * len(counts)
+
         probs = [x / counts_sum for x in counts]
         return probs, sims
 
@@ -267,66 +280,136 @@ class MCTS:
             self.Es[s] = self.game.get_game_ended(canonicalBoard, 1)
         if self.Es[s] != 0:
             return -self.Es[s]
-
-        # 2. New leaf -> Expand and backpropagate the nn value 
-        if s not in self.Ps:
-            pi, v = self.nnet.predict(canonicalBoard)
-            
-            # Mask for filtering invalid moves
-            valid_moves = self.game.get_valid_moves(canonicalBoard)
-            pi = pi * valid_moves 
-            sum_pi = np.sum(pi)
-            
-            # Re-normalize and assign uniform probability to valid moves
-            if sum_pi > 0:
-                pi /= sum_pi 
-            else:
-                print("All valid moves were masked, making all valid moves equally probable!")
-                pi = valid_moves / np.sum(valid_moves)
-
-            self.Ps[s] = pi
-            self.Ns[s] = 0
-            self.Vs[s] = valid_moves
-            
-            return -v
-
-        # 3. Known Node -> Selection using PUCT
+        
+        # 2. Expert knowledge: Attack and Defense
+        if s not in self.Vs:
+            self.Vs[s] = self.game.get_valid_moves(canonicalBoard)
         valid_moves = self.Vs[s]
-        cur_best = -float('inf')
+
+        # Attack: Check if player can win and stop the search if so
+        winning_move = self._manual_check_win(canonicalBoard, 1, valid_moves)
+        if winning_move is not None:
+            return -1 
+        
+        # Defense: Check if player can block opponent from winning and prune the tree if so
+        blocking_move = self._manual_check_win(canonicalBoard, -1, valid_moves)
+
         best_act = -1
 
-        # PUCT Formula: U(s,a) = Q(s,a) + cpuct * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
-        cpuct = self.args.cpuct
-        sqrt_Ns = math.sqrt(self.Ns[s])
+        if blocking_move is not None:
+            best_act = blocking_move
 
-        for a in np.where(valid_moves)[0]:
-            if (s, a) in self.Qsa:
-                u = self.Qsa[(s, a)] + cpuct * self.Ps[s][a] * sqrt_Ns / (1 + self.Nsa[(s, a)])
-            else:
-                u = cpuct * self.Ps[s][a] * sqrt_Ns + 1e-8 
-
-            if u > cur_best:
-                cur_best = u
-                best_act = a
-
-        a = best_act
+            if s not in self.Ns:
+                self.Ns[s] = 0
         
-        # 4. Recursion -> Go down to the next level
+        else:
+            # 3. New leaf -> Expand and backpropagate the nn value 
+            if s not in self.Ps:
+                pi, v = self.nnet.predict(canonicalBoard)
+                
+                # Mask for filtering invalid moves
+                pi = pi * valid_moves 
+                sum_pi = np.sum(pi)
+                
+                # Re-normalize and assign uniform probability to valid moves
+                if sum_pi > 0:
+                    pi /= sum_pi 
+                else:
+                    pi = valid_moves / np.sum(valid_moves)
+
+                self.Ps[s] = pi
+                self.Ns[s] = 0
+                
+                return -v
+
+            # 4. Known Node -> Selection using PUCT
+            cur_best = -float('inf')
+
+            # PUCT Formula: U(s,a) = Q(s,a) + cpuct * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
+            cpuct = self.args.cpuct
+            sqrt_Ns = math.sqrt(self.Ns[s])
+
+            for a in np.where(valid_moves)[0]:
+                if (s, a) in self.Qsa:
+                    u = self.Qsa[(s, a)] + cpuct * self.Ps[s][a] * sqrt_Ns / (1 + self.Nsa[(s, a)])
+                else:
+                    u = cpuct * self.Ps[s][a] * sqrt_Ns + 1e-8 
+
+                if u > cur_best:
+                    cur_best = u
+                    best_act = a
+
+            a = best_act
+
+        # 5. Recursion -> Go down to the next level
+        a = best_act
         next_s, next_player = self.game.get_next_state(canonicalBoard, 1, a)
         next_s = self.game.get_canonical_form(next_s, next_player)
 
         v = self.search(next_s)
 
-        # 5. Backpropagation -> Update moving average Q = (N*Q + v) / (N+1) and N
+        # Discounting factor for distant future rewards
+        v = self.args.gamma * v
+
+        # 6. Backpropagation -> Update moving average Q = (N*Q + v) / (N+1) and N
         if (s, a) in self.Qsa:
             self.Qsa[(s, a)] = (self.Nsa[(s, a)] * self.Qsa[(s, a)] + v) / (self.Nsa[(s, a)] + 1)
             self.Nsa[(s, a)] += 1
+
         else:
             self.Qsa[(s, a)] = v
             self.Nsa[(s, a)] = 1
 
         self.Ns[s] += 1
+
         return -v
+    
+    def _manual_check_win(self, board, player, valid_moves):
+        """
+        Checks if the current player can win or block the opponent from winning.
+        """
+        rows, cols = self.game.get_board_size()
+        valid_cols = np.where(valid_moves)[0]
+        for col in valid_cols:
+            row = np.max(np.where(board[:, col] == 0))
+
+            # Check 4 in a row (Horizontal, Vertical, Diagonal)
+            # Horizontal
+            c_start = max(0, col - 3)
+            c_end = min(cols, col + 4)
+            count = 0
+            for c in range(c_start, c_end):
+                val = player if c == col else board[row, c]
+                if val == player:
+                    count += 1
+                    if count == 4: return col
+                else:
+                    count = 0
+
+            # Vertical
+            if row + 3 < rows:
+                if np.all(board[row+1:row+4, col] == player):
+                    return col
+
+            # Diagonals
+            for d_row, d_col in [(1, 1), (1, -1)]:
+                count = 1
+                # Positive directions
+                for i in range(1, 4):
+                    r, c = row + i*d_row, col + i*d_col
+                    if 0 <= r < rows and 0 <= c < cols and board[r, c] == player:
+                        count += 1
+                    else: break
+                # Negative directions
+                for i in range(1, 4):
+                    r, c = row - i*d_row, col - i*d_col
+                    if 0 <= r < rows and 0 <= c < cols and board[r, c] == player:
+                        count += 1
+                    else: break
+                
+                if count >= 4: return col
+        
+        return None
 
 # --- HELPER WINNER FUNCTION ---
 def check_winning_move(board, player, config):
@@ -383,7 +466,7 @@ def check_winning_move(board, player, config):
 MODEL_FILENAME = 'best.pth.tar'
 NUM_CHANNELS = 64
 DEVICE = 'cpu'
-TIME_LIMIT = 1.8
+TIME_LIMIT = 1.9
 
 GLOBAL_NET = None
 GLOBAL_GAME = None
@@ -401,7 +484,7 @@ def load_model():
         model_path = MODEL_FILENAME
 
     game = Connect4Game()
-    args = dotdict({'num_channels': NUM_CHANNELS, 'cpuct': 2.0, 'cuda': False})
+    args = dotdict({'num_channels': NUM_CHANNELS, 'cpuct': 2.0, 'gamma': 0.99, 'cuda': False})
     nnet = Connect4NNet(game, args)
     
     if os.path.exists(model_path):
@@ -435,11 +518,13 @@ def alphazero_agent(observation, configuration):
     # Check for winning move
     win_col = check_winning_move(board, me, configuration)
     if win_col is not None:
+        print(f"Winning move at column {win_col}")
         return int(win_col)
     
     # Check for opponent winning move
     block_col = check_winning_move(board, opponent, configuration)
     if block_col is not None:
+        print(f"Blocking opponent's winning move at column {block_col}")
         return int(block_col)
     
     # If no winning move, use model
