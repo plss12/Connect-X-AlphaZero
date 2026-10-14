@@ -35,9 +35,9 @@ class MCTS:
         # Apply temperature
         # Competitive (Deterministic)
         if temp == 0:
-            best_counts = [c if valid else -1 for c, valid in zip(counts, valid_moves)]
+            best_counts = np.where(valid_moves == 1, counts, -1)
 
-            bestAs = np.array(np.argwhere(best_counts == np.max(best_counts))).flatten()
+            bestAs = np.flatnonzero(best_counts == best_counts.max())
             bestA = np.random.choice(bestAs)
             probs = [0] * len(counts)
             probs[bestA] = 1
@@ -121,17 +121,20 @@ class MCTS:
             cur_best = -float('inf')
 
             # PUCT Formula: U(s,a) = Q(s,a) + cpuct * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
+            # Unvisited edges have no Q and are ranked by the prior alone. The epsilon inside the
+            # sqrt (as in alpha-zero-general) keeps that ranking when N(s) is still 0; adding it
+            # outside would make every unvisited edge tie and the first valid column win.
             cpuct = self.args.cpuct
-            sqrt_Ns = math.sqrt(self.Ns[s])
+            sqrt_Ns = math.sqrt(self.Ns[s] + 1e-8)
 
             valid_inds = np.where(valid_moves)[0]
             for a in valid_inds:
-                qsa = self.Qsa.get((s, a), a)
+                qsa = self.Qsa.get((s, a))
                 if qsa is not None:
-                    nsa = self.Nsa.get((s, a), 0)
+                    nsa = self.Nsa[(s, a)]
                     u = qsa + cpuct * ps[a] * sqrt_Ns / (1 + nsa)
                 else:
-                    u = cpuct * ps[a] * sqrt_Ns + 1e-8 
+                    u = cpuct * ps[a] * sqrt_Ns
 
                 if u > cur_best:
                     cur_best = u
@@ -190,15 +193,4 @@ class MCTS:
             if is_win:
                 return col
                 
-        return None
-
-    def _check_win(self, board, player, valid_moves):
-        """
-        Simulates placing a piece in each valid column and checks for a win.
-        """
-        valid_cols = np.where(valid_moves)[0]
-        for col in valid_cols:
-            temp_board, _ = self.game.get_next_state(board, player, col)
-            if self.game.check_win_fast(temp_board, player):
-                return col
         return None
