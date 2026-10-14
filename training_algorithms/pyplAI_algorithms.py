@@ -148,7 +148,7 @@ def minimax_agent(observation, configuration):
     current_board = observation.board
     current_player = observation.mark
         
-    pyplai_state = ConnectXState(current_board, current_player, total_limit_time)
+    pyplai_state = ConnectXState(current_board, current_player, turn_deadline)
     
     valid_moves = pyplai_state.get_moves()
     best_move = valid_moves[len(valid_moves)//2] if valid_moves else None

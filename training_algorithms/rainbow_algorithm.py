@@ -1,4 +1,5 @@
 import os
+import sys
 import math
 import shutil
 import numpy as np
@@ -23,7 +24,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 from env.connectXgym import ConnectXGym, check_winning_move, apply_mask_to_logits
-from pyplAI_algorithms import minimax_lite_agent
+from training_algorithms.pyplAI_algorithms import minimax_lite_agent
 
 
 
