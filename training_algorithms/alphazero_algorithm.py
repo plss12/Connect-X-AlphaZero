@@ -44,6 +44,7 @@ args = dotdict({
     'batch_size': 512,           # Batch size
     'cuda': True,                # Use GPU (Change to False if you don't have NVIDIA)
     'num_channels': 32,          # Network size (convolutional filters)
+    'compile': True,             # torch.compile the network (needs a C++ compiler on the machine)
 
     # 4. Checkpoint Configuration
     'load_model': False,                    # Load previous model? (Set True to resume)

@@ -100,15 +100,18 @@ class NNetWrapper:
 
         if args.cuda:
             self.nnet.cuda()
-        
-        self.nnet = torch.compile(self.nnet)
+
+        # torch.compile can be disabled (args.compile=False) for tests and machines without a
+        # C++ compiler. Compiled and eager checkpoints differ in the '_orig_mod.' key prefix.
+        if args.get('compile', True):
+            self.nnet = torch.compile(self.nnet)
 
     def train(self, examples, writer, iteration):
         """
         examples: list of (board, pi, v)
         """
         # Calculate learning rate for this iteration (Cosine Annealing)
-        progress = (iteration - 1) / (self.args.num_iters - 1)
+        progress = (iteration - 1) / max(self.args.num_iters - 1, 1)
         current_lr = self.args.min_lr + (self.args.max_lr - self.args.min_lr) * (1 + np.cos(np.pi * progress)) / 2
         print(f"Current learning rate: {current_lr}")
 
@@ -221,11 +224,13 @@ class NNetWrapper:
 
         iterations = []
         for f in files:
+            basename = os.path.basename(f)
             try:
-                basename = os.path.basename(f)
                 num = int(re.findall(r'\d+', basename)[0])
-                iterations.append(num)
-            except:
-                pass
+            except (IndexError, ValueError):
+                # Not a numbered checkpoint (e.g. a renamed backup): it cannot be resumed from
+                print(f"Ignoring examples file without iteration number: {basename}")
+                continue
+            iterations.append(num)
                 
         return max(iterations) + 1 if iterations else 1
