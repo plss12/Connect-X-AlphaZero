@@ -23,7 +23,8 @@ from torch.utils.tensorboard import SummaryWriter
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
-from env.connectXgym import ConnectXGym, check_winning_move, apply_mask_to_logits
+from env.connectXgym import (ConnectXGym, apply_mask_to_distribution, check_winning_move,
+                             expected_q_values)
 from training_algorithms.pyplAI_algorithms import minimax_lite_agent
 
 
@@ -118,12 +119,11 @@ class RainbowCNN(nn.Module):
         value = self.value_stream(features).view(batch_size, 1, self.num_atoms)
         advantage = self.advantage_stream(features).view(batch_size, self.action_shape, self.num_atoms)
         logits = value + advantage - advantage.mean(dim=1, keepdim=True)
+        probs = logits.softmax(dim=2)
 
         # Apply action mask for invalid actions
         if info is not None and "action_mask" in info:
-            logits = apply_mask_to_logits(logits, info["action_mask"], self.device)
-
-        probs = logits.softmax(dim=2)
+            probs = apply_mask_to_distribution(probs, info["action_mask"], self.device)
 
         return probs, state
 
@@ -172,15 +172,12 @@ class RainbowAgent:
             mask_bool[col] = True
         mask_tensor = torch.tensor(mask_bool, dtype=torch.bool).to(self.device).unsqueeze(0)
         
+        # The network returns probabilities (already softmaxed): no second softmax here
         with torch.no_grad():
-            logits, _ = self.model(state_tensor, info={"action_mask": mask_tensor})
-            probs = F.softmax(logits, dim=2)
-            q_values = (probs * self.support).sum(dim=2)
+            probs, _ = self.model(state_tensor, info={"action_mask": mask_tensor})
+            q_values = expected_q_values(probs, self.support, mask_tensor)
             best_move = int(torch.argmax(q_values).item())
-        
-        if best_move not in valid_moves:
-            best_move = int(np.random.choice(valid_moves))
-        
+
         return best_move
 
 

@@ -97,31 +97,42 @@ class RainbowCNN(nn.Module):
         value = self.value_stream(features).view(batch_size, 1, self.num_atoms)
         advantage = self.advantage_stream(features).view(batch_size, self.action_shape, self.num_atoms)
         logits = value + advantage - advantage.mean(dim=1, keepdim=True)
+        probs = logits.softmax(dim=2)
 
         # Apply action mask for invalid actions
         if info is not None and "action_mask" in info:
-            logits = apply_mask_to_logits(logits, info["action_mask"], self.device)
-
-        probs = logits.softmax(dim=2)
+            probs = apply_mask_to_distribution(probs, info["action_mask"], self.device)
 
         return probs, state
 
 
 
-def apply_mask_to_logits(logits, mask, device):
+def apply_mask_to_distribution(probs, mask, device):
+    """Masks a C51 value distribution of shape (batch, actions, atoms).
 
+    Masking the logits, as for PPO, leaves invalid actions with a uniform distribution, whose
+    expected value is the middle of the support (0 here). That beats every valid action with a
+    negative expected return. Instead, all the mass of an invalid action goes to the lowest atom,
+    so its Q is v_min and greedy selection does not pick it.
+    """
     if mask is None:
-        return logits
-    
-    if not isinstance(mask, torch.Tensor):
-        mask = torch.tensor(mask, dtype=torch.bool, device=device)
-    else:
-        mask = mask.to(device)
-    
-    if logits.dim() == 3 and mask.dim() == 2:
-        mask = mask.unsqueeze(-1)
+        return probs
 
-    return torch.where(mask, logits, -100)
+    mask = torch.as_tensor(mask, dtype=torch.bool, device=device)
+    if mask.dim() == 1:
+        mask = mask.unsqueeze(0)
+
+    lowest_atom = torch.zeros_like(probs)
+    lowest_atom[..., 0] = 1.0
+    return torch.where(mask.unsqueeze(-1), probs, lowest_atom)
+
+def expected_q_values(probs, support, mask=None):
+    """Q(s, a) = sum_z p(z | s, a) * z from the network probabilities; invalid actions get -inf."""
+    q_values = (probs * support).sum(dim=-1)
+    if mask is not None:
+        mask = torch.as_tensor(mask, dtype=torch.bool, device=q_values.device)
+        q_values = q_values.masked_fill(~mask, float('-inf'))
+    return q_values
 
 def check_winning_move(board, col, mark):
     rows, columns = board.shape
@@ -218,13 +229,10 @@ def rainbow_agent(observation, configuration):
         mask_bool[col] = True
     mask_tensor = torch.tensor(mask_bool, dtype=torch.bool).to(DEVICE).unsqueeze(0)
     
+    # The network returns probabilities (already softmaxed): no second softmax here
     with torch.no_grad():
-        logits, _ = TRAINED_MODEL(state_tensor, info={"action_mask": mask_tensor})
-        probs = F.softmax(logits, dim=2)
-        q_values = (probs * SUPPORT).sum(dim=2)
+        probs, _ = TRAINED_MODEL(state_tensor, info={"action_mask": mask_tensor})
+        q_values = expected_q_values(probs, SUPPORT, mask_tensor)
         best_move = int(torch.argmax(q_values).item())
-    
-    if best_move not in valid_moves:
-        best_move = int(np.random.choice(valid_moves))
 
     return best_move
