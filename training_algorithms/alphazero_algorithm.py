@@ -1,7 +1,6 @@
 import os
 import sys
 from torch.utils.tensorboard import SummaryWriter
-import time
 import torch
 torch.set_float32_matmul_precision('medium')
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,7 +16,7 @@ class dotdict(dict):
         try:
             return self[name]
         except KeyError:
-            raise AttributeError(name)
+            raise AttributeError(name) from None
 
 # --- HYPERPARAMETER CONFIGURATION ---
 args = dotdict({
@@ -74,9 +73,8 @@ def main():
         print("Starting training from scratch...")
 
     # 3. Create Summary Writer for TensorBoard
-    run_name = f"run_{int(time.time())}"
-    print(f"Creating TensorBoard...")
-    writer = SummaryWriter(log_dir=f'./alphazero/files/logs/')
+    print("Creating TensorBoard...")
+    writer = SummaryWriter(log_dir='./alphazero/files/logs/')
     
     # 4. Create Trainer
     c = Trainer(g, nnet, args, writer)
@@ -87,7 +85,7 @@ def main():
         c.loadTrainExamples()
 
     # 6. Training
-    print(f"Starting the training loop...")
+    print("Starting the training loop...")
     if args.load_model:
         c.learn(start_iter)
     else:

@@ -1,9 +1,7 @@
-import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import time
 import os
 import glob
 import re
@@ -119,18 +117,15 @@ class NNetWrapper:
 
         for epoch in range(self.args.epochs):
             self.nnet.train()
-            data_time = AverageMeter()
-            batch_time = AverageMeter()
             pi_losses = AverageMeter()
             v_losses = AverageMeter()
-            end = time.time()
 
             batch_idx = 0
 
             # Split data into Batches
             while batch_idx < int(len(examples) / self.args.batch_size):
                 sample_ids = np.random.randint(len(examples), size=self.args.batch_size)
-                boards, pis, vs = list(zip(*[examples[i] for i in sample_ids]))
+                boards, pis, vs = list(zip(*[examples[i] for i in sample_ids], strict=True))
 
                 # Convert the board from (6,7) to (3,6,7)
                 # Channel 0: My pieces (1)

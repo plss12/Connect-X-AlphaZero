@@ -5,7 +5,7 @@ import os
 
 
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+def layer_init(layer, std=2 ** 0.5, bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
@@ -27,7 +27,7 @@ class FeatureExtractor(nn.Module):
 
         self.output_dim = 128 * h * w 
 
-    def forward(self, obs, state=None, info={}):
+    def forward(self, obs, state=None, info=None):
         if not isinstance(obs, torch.Tensor):
             obs = torch.tensor(obs, dtype=torch.float, device=self.device)
         return self.conv(obs), state
@@ -42,7 +42,7 @@ class Actor(nn.Module):
         self.last_layer = layer_init(nn.Linear(preprocess_net.output_dim, action_shape), std=0.01)
         self.device = device
         
-    def forward(self, obs, state=None, info={}):
+    def forward(self, obs, state=None, info=None):
         features, _ = self.preprocess_net(obs, state)
         logits = self.last_layer(features)
 

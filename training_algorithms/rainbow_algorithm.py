@@ -107,7 +107,7 @@ class RainbowCNN(nn.Module):
             NoisyLinear(self.flatten_dim, 512), nn.ReLU(),
             NoisyLinear(512, action_shape * num_atoms))
 
-    def forward(self, obs, state=None, info={}):
+    def forward(self, obs, state=None, info=None):
         if not isinstance(obs, torch.Tensor):
             obs = torch.tensor(obs, dtype=torch.float, device=self.device)
         
@@ -209,7 +209,6 @@ def train_rainbow_self_play():
     NUM_ATOMS = 101
     V_MIN = -30
     V_MAX = 30
-    NOISY_STD = 0.5
 
     ALPHA = 0.6
     BETA_START = 0.4
@@ -302,7 +301,7 @@ def train_rainbow_self_play():
 
     logger = TensorboardLogger(SummaryWriter(log_path))
  
-    result = algorithm.run_training(OffPolicyTrainerParams(
+    algorithm.run_training(OffPolicyTrainerParams(
                                         training_collector=train_collector, test_collector=test_collector, test_step_num_episodes=TEST_EPISODES,
                                         max_epochs=TOTAL_EPOCHS, epoch_num_steps=STEP_PER_EPOCH, batch_size=BATCH_SIZE, logger=logger,
                                         collection_step_num_env_steps=STEP_PER_COLLECT, update_step_num_gradient_steps_per_sample=UPDATE_PER_COLLECT,

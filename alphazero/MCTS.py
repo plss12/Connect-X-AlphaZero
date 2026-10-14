@@ -1,6 +1,5 @@
 import math
 import numpy as np
-import torch
 
 class MCTS:
     def __init__(self, game, nnet, args):
@@ -22,7 +21,7 @@ class MCTS:
         Executes 'num_mcts_sims' simulations and returns the action probabilities.
         """
         # Execute MCTS simulations
-        for i in range(self.args.num_mcts_sims):
+        for _ in range(self.args.num_mcts_sims):
             self.search(canonicalBoard)
 
         s = canonicalBoard.tobytes()
@@ -46,7 +45,7 @@ class MCTS:
         # Exploration (Stochastic)
         # If temp > 0, normalize the visits to obtain a distribution
         counts = [x ** (1. / temp) for x in counts]
-        counts = [c * v for c, v in zip(counts, valid_moves)]
+        counts = [c * v for c, v in zip(counts, valid_moves, strict=True)]
         counts_sum = float(sum(counts))
 
         if counts_sum == 0:

@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
-import sys
 import time
 import math
 
@@ -16,7 +15,7 @@ class dotdict(dict):
         try:
             return self[name]
         except KeyError:
-            raise AttributeError(name)
+            raise AttributeError(name) from None
 
 # --- GAME ---
 class Connect4Game:
@@ -275,7 +274,7 @@ class MCTS:
         # Exploration (Stochastic)
         # If temp > 0, normalize the visits to obtain a distribution
         counts = [x ** (1. / temp) for x in counts]
-        counts = [c * v for c, v in zip(counts, valid_moves)]
+        counts = [c * v for c, v in zip(counts, valid_moves, strict=True)]
         counts_sum = float(sum(counts))
 
         if counts_sum == 0:
@@ -457,7 +456,7 @@ def load_model():
         raw_nnet.load_state_dict(model)
         raw_nnet.to(DEVICE)
         raw_nnet.eval()
-        nnet = torch.quantization.quantize_dynamic(raw_nnet, {nn.Linear}, dtype=torch.qint8, inplace=True)
+        torch.quantization.quantize_dynamic(raw_nnet, {nn.Linear}, dtype=torch.qint8, inplace=True)
         dummy_input = torch.randn(1, 3, 6, 7)
         traced_nnet = torch.jit.trace(raw_nnet, dummy_input)
         final_nnet = NNetWrapper(traced_nnet)

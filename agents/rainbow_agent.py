@@ -85,7 +85,7 @@ class RainbowCNN(nn.Module):
             NoisyLinear(self.flatten_dim, 512), nn.ReLU(),
             NoisyLinear(512, action_shape * num_atoms))
 
-    def forward(self, obs, state=None, info={}):
+    def forward(self, obs, state=None, info=None):
         if not isinstance(obs, torch.Tensor):
             obs = torch.tensor(obs, dtype=torch.float, device=self.device)
         

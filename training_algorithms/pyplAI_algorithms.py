@@ -1,5 +1,4 @@
 import time
-import random
 import pyplAI
 
 # Adapting ConnectX to pyplAI
