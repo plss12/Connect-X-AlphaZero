@@ -180,17 +180,13 @@ def load_model():
 
     model = RainbowCNN(state_shape=(3, 6, 7), action_shape=7, num_atoms=NUM_ATOMS, device=DEVICE)
 
-    if os.path.exists(model_path):
-        try:
-            model.load_state_dict(torch.load(model_path, map_location=DEVICE), strict=False)
-            model.eval()
-            return model
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            return None
-    else:
+    if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found at {model_path}")
-        return None
+
+    # strict=True: a file from another architecture must fail here, not play with random weights
+    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    model.eval()
+    return model
 
 def rainbow_agent(observation, configuration):
     global TRAINED_MODEL

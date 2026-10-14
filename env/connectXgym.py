@@ -44,7 +44,7 @@ class ConnectXGym(gym.Env):
         layer_opponent = (board == 2)
         layer_empty = (board == 0)
 
-        return np.stack([layer_me, layer_opponent, layer_empty])
+        return np.stack([layer_me, layer_opponent, layer_empty]).astype(np.float32)
     
     def _get_action_mask(self, board):
         mask = np.ones(self.columns, dtype=bool)
@@ -65,7 +65,8 @@ class ConnectXGym(gym.Env):
 
         self.pair = [None, self.opponent]
 
-        if np.random.random() < self.switch_prob:
+        # Use the env RNG (seeded by reset) so that the player order is reproducible
+        if self.np_random.random() < self.switch_prob:
             self.pair = self.pair[::-1]
             self.trainer = self.env.train(self.pair)
         else:
@@ -90,8 +91,9 @@ class ConnectXGym(gym.Env):
             # Win reward
             if reward == 1:
                 reward = 20
-            # Loss reward
-            elif reward == -1:
+            # Loss reward. Kaggle ends the game with reward None after an invalid action
+            # (full column), which must not be scored as a draw
+            elif reward == -1 or reward is None:
                 reward = -20
             # Draw reward
             else:

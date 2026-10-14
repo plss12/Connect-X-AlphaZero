@@ -111,17 +111,13 @@ def load_model():
     base_net = FeatureExtractor(state_shape=(3, 6, 7), device=DEVICE)
     actor = Actor(base_net, action_shape=7, device=DEVICE)
     
-    if os.path.exists(model_path):
-        try:
-            actor.load_state_dict(torch.load(model_path, map_location=DEVICE), strict=False)
-            actor.eval()
-            return actor
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            return None
-    else:
+    if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found at {model_path}")
-        return None
+
+    # strict=True: a file from another architecture must fail here, not play with random weights
+    actor.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    actor.eval()
+    return actor
 
 def ppo_agent(observation, configuration):
     global TRAINED_MODEL
