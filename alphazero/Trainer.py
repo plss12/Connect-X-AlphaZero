@@ -2,9 +2,9 @@ from collections import deque
 from .MCTS import MCTS
 import numpy as np
 from tqdm import tqdm
-import time
 import os
 import re
+import sys
 from pickle import Pickler, Unpickler
 
 class Trainer:
@@ -50,8 +50,10 @@ class Trainer:
             # 6. Game ended?
             r = self.game.get_game_ended(board, 1)
             if r != 0:
-                # Propagation of the r (result from player 1's perspective) to all examples in the history
-                return [(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
+                # r is the result from player 1's perspective and x[1] is the player (1 or -1) to
+                # move in that example, so r * x[1] is the result from the mover's perspective,
+                # which is what the value head predicts from the canonical board
+                return [(x[0], x[2], r * x[1]) for x in trainExamples]
 
     def arena(self, pmcts, nmcts):
         """
@@ -90,7 +92,8 @@ class Trainer:
                 r = self.game.get_game_ended(board, 1)
                 
                 if r != 0:
-                    return r * curPlayer
+                    # r is already from player 1's perspective: 1 = P1 won, -1 = P2 won
+                    return r
 
         for _ in tqdm(range(self.args.arenaCompare // 2), desc="Arena"):
             # Half of the games start with the Old network, half with the New one
@@ -186,8 +189,9 @@ class Trainer:
                 print(f"Deleting old data (Keeping {self.args.numItersForTrainExamplesHistory} iters)...")
                 self.trainExamplesHistory.pop(0)
             
-            # Save backup of examples
-            self.saveTrainExamples(i - 1)
+            # Save backup of examples, named after this iteration so that a resumed run
+            # (get_latest_checkpoint_iteration -> i + 1) does not repeat its self-play
+            self.saveTrainExamples(i)
 
             # Flatten list of examples to train
             trainExamples = []
@@ -232,10 +236,12 @@ class Trainer:
             if (nwins + pwins) > 0 and winratenew < self.args.updateThreshold:
                 print("REJECTED: The new network is not good enough.")
                 self.nnet.load_checkpoint(folder=self.args.checkpoint_folder, filename='temp.pth.tar')
-                self.writer.add_scalar('Arena/Updates', updates, i)
+                if self.writer:
+                    self.writer.add_scalar('Arena/Updates', updates, i)
             else:
                 print("ACCEPTED: Saving new best network.")
                 self.nnet.save_checkpoint(folder=self.args.checkpoint_folder, filename='best.pth.tar')
                 self.saveTrainCheckpoint(i)
                 updates += 1
-                self.writer.add_scalar('Arena/Updates', updates, i)
+                if self.writer:
+                    self.writer.add_scalar('Arena/Updates', updates, i)

@@ -1,0 +1,61 @@
+[project]
+name = "connect-x-alphazero"
+version = "1.0.0"
+description = "Connect 4 agents for Kaggle's Connect X: Minimax, MCTS, PPO, Rainbow and AlphaZero"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Pedro Luis Soto Santos", email = "pepoluis712@gmail.com" }]
+dependencies = [
+    "kaggle-environments>=1.33.0",
+    "numpy>=2.5.4",
+    "pyplai",
+    "torch>=2.14.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+pyplai = { git = "https://github.com/plss12/pyplAI", tag = "v1.1.0" }
+# CPU wheels on Linux (CI, small download) and CUDA 13.0 wheels on Windows (local GPU training).
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cu130", marker = "sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
+train = [
+    "gymnasium>=1.2.0",
+    "matplotlib>=3.11.2",
+    "tensorboard>=2.21.0",
+    "tianshou>=2.0.1",
+    "tqdm>=4.70.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["*.ipynb"]
+
+[tool.ruff.lint]
+# Pyflakes (undefined names, unused imports), syntax errors and bugbear.
+select = ["F", "E9", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

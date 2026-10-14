@@ -1,77 +1,186 @@
-import time
-import random
+# Kaggle submissions cannot install pyplAI, so the MCTS algorithm is vendored below verbatim from
+# pyplAI v1.1.0 (https://github.com/plss12/pyplAI/blob/v1.1.0/pyplAI/Algoritmos.py).
+# tests/test_pyplai_sync.py checks that it still matches the installed pyplAI.
+from __future__ import annotations
+
 import math
+import random
+import time
 from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Any, Callable, List, Optional
 
-# Kaggle does not allow to use pyplAI, so we copy mcts code here
+#Valor de una victoria en Minimax. Las heurísticas deben devolver valores de menor magnitud
+VICTORIA = 1e9
+
+
+@dataclass
+class EvaluacionMovimiento:
+    """Evaluación de un movimiento de la raíz tras la búsqueda."""
+    movimiento: Any
+    #Número de visitas del nodo (0 en Minimax, que no muestrea)
+    visitas: int
+    #Recompensa media del jugador que mueve en MCTS e ISMCTS (entre 0 y 1) o valor minimax
+    valor: float
+
+
+@dataclass
+class ResultadoAnalisis:
+    """Resultado de analizar un estado: movimiento elegido y ranking de todos los movimientos."""
+    movimiento: Any
+    #Movimientos ordenados de mejor a peor según el criterio de elección del algoritmo
+    movimientos: List[EvaluacionMovimiento] = field(default_factory=list)
+    #Iteraciones de búsqueda (Monte Carlo) o estados evaluados (Minimax)
+    iteraciones: int = 0
+    nodos: int = 0
+    tiempo: float = 0.0
+
+
+def _generador(semilla: Optional[int]) -> Any:
+    #Sin semilla se usa el módulo random, así random.seed() sigue controlando la biblioteca
+    return random if semilla is None else random.Random(semilla)
+
+
+def _comprueba_movimientos(movimientos: list, estado: Any) -> None:
+    if len(movimientos) == 0:
+        raise ValueError(
+            "El estado no es final pero no tiene movimientos posibles. Todo estado no final "
+            "debe tener al menos un movimiento (estado: " + repr(estado) + ")")
+
+
+def _recompensa(gana_jugador: Callable, estado: Any, jugadores: List[int]) -> List[float]:
+    #Vector de recompensas: 1 para cada ganador, 0 para el resto y 0.5 para todos si hay empate
+    res = [1.0 if gana_jugador(estado, jugador) else 0.0 for jugador in jugadores]
+    if 1.0 not in res:
+        res = [0.5] * len(jugadores)
+    return res
+
+
+class _Presupuesto:
+    """Controla el límite de la búsqueda: un tiempo en segundos o un número fijo de iteraciones."""
+
+    def __init__(self, tiempoEjecucion: float, iteraciones: Optional[int]):
+        if iteraciones is not None and iteraciones < 1:
+            raise ValueError("iteraciones debe ser un entero mayor que 0")
+        self.tiempoEjecucion = tiempoEjecucion
+        self.iteraciones = iteraciones
+        self.t0 = time.perf_counter()
+        self.realizadas = 0
+
+    def inicia(self) -> None:
+        self.t0 = time.perf_counter()
+        self.realizadas = 0
+
+    def continua(self) -> bool:
+        #Se llama tras cada iteración, así siempre se hace al menos una y la raíz tiene algún hijo
+        self.realizadas += 1
+        if self.iteraciones is not None:
+            return self.realizadas < self.iteraciones
+        return time.perf_counter() - self.t0 < self.tiempoEjecucion
+
+    def transcurrido(self) -> float:
+        return time.perf_counter() - self.t0
+
+
 class MCTS:
-    k = 1/math.sqrt(2) #Coeficiente de exploracion
+    """Monte Carlo Tree Search con UCT (algoritmo 2 de Browne et al., 2012).
 
-    def __init__(self, aplicar_movimiento, obtener_movimientos, es_estado_final, gana_jugador, numeroJugadores, tiempoEjecucion, estadisticas=False):
-        self.aplicar_movimiento = staticmethod(aplicar_movimiento)
-        self.obtener_movimientos = staticmethod(obtener_movimientos)
-        self.es_estado_final = staticmethod(es_estado_final)
-        self.gana_jugador = staticmethod(gana_jugador)
+    Las recompensas son un vector con una entrada por jugador y cada nodo se elige con la
+    recompensa del jugador que mueve en su padre, lo que permite más de dos jugadores.
+    """
+    k = 1/math.sqrt(2) #Coeficiente de exploración Cp
+
+    def __init__(self, aplicar_movimiento, obtener_movimientos, es_estado_final, gana_jugador, numeroJugadores, tiempoEjecucion, estadisticas=False, *, iteraciones=None, semilla=None, seleccion_final="media"):
+        if seleccion_final not in ("media", "visitas"):
+            raise ValueError("seleccion_final debe ser 'media' o 'visitas'")
+        self.aplicar_movimiento = aplicar_movimiento
+        self.obtener_movimientos = obtener_movimientos
+        self.es_estado_final = es_estado_final
+        self.gana_jugador = gana_jugador
         self.jugadores = [i+1 for i in range(numeroJugadores)]
         self.tiempoEjecucion = tiempoEjecucion
         self.estadisticas = estadisticas
+        self.seleccion_final = seleccion_final
+        self.presupuesto = _Presupuesto(tiempoEjecucion, iteraciones)
+        self.rng = _generador(semilla)
 
     class nodo:
         def __init__(self,padre,mov=None):
             self.mov=mov #Movimiento que ha generado el nodo
-            self.n = 0 #Numero de veces que se ha visitado el nodo
+            self.n = 0 #Número de veces que se ha visitado el nodo
             self.q = [] #Vector de recompensas acumuladas
             self.hijos = [] #Lista de nodos hijos
             self.padre = padre #Nodo padre
 
     @staticmethod
     def movs_restantes(v,movs):
-        res=movs.copy()
+        res=list(movs)
         for hijo in v.hijos:
-            if(hijo.mov in movs):
+            if(hijo.mov in res):
                 res.remove(hijo.mov)
         return res
-        
+
     @staticmethod
     def nodos_creados(v):
-        if(len(v.hijos)==0):
-            return 1
-        else:
-            suma = 1
-            for hijo in v.hijos:
-                suma = suma + MCTS.nodos_creados(hijo)
-            return suma
+        suma = 1
+        pendientes = list(v.hijos)
+        while pendientes:
+            hijo = pendientes.pop()
+            suma += 1
+            pendientes.extend(hijo.hijos)
+        return suma
+
+    def busca(self, s0):
+        """Ejecuta la búsqueda desde s0 y devuelve el nodo raíz."""
+        v0 = self.nodo(None)
+        v0.q = [0]*len(self.jugadores)
+        movimientos = self.obtener_movimientos(s0)
+        self.presupuesto.inicia()
+        while True:
+            v1, s1, movs = self.tree_policy(v0, s0, movimientos)
+            delta = self.default_policy(s1, movs, self.jugadores)
+            self.backup(v1, delta, self.jugadores)
+            if not self.presupuesto.continua():
+                break
+        return v0
+
+    def _ordena_hijos(self, v0, jugador):
+        if self.seleccion_final == "visitas":
+            #Robust child: el hijo más visitado
+            return sorted(v0.hijos, key=lambda h: h.n, reverse=True)
+        #BESTCHILD(v0, 0) de Browne et al.: el hijo con mayor recompensa media
+        return sorted(v0.hijos, key=lambda h: h.q[jugador]/h.n, reverse=True)
+
+    def analiza(self, s0):
+        """Busca desde s0 y devuelve un ResultadoAnalisis con el ranking de movimientos. No imprime nada."""
+        if self.es_estado_final(s0) or len(self.obtener_movimientos(s0)) == 0:
+            return ResultadoAnalisis(None)
+        v0 = self.busca(s0)
+        jugador = s0.jugadorActual-1
+        hijos = self._ordena_hijos(v0, jugador)
+        return ResultadoAnalisis(
+            movimiento=hijos[0].mov,
+            movimientos=[EvaluacionMovimiento(h.mov, h.n, h.q[jugador]/h.n) for h in hijos],
+            iteraciones=v0.n,
+            nodos=self.nodos_creados(v0),
+            tiempo=self.presupuesto.transcurrido())
 
     def ejecuta(self, s0):
         movimientos=self.obtener_movimientos(s0)
         if(len(movimientos)==1):
             return movimientos[0]
-        elif(len(movimientos)==0):
+        elif(len(movimientos)==0 or self.es_estado_final(s0)):
             return None
-        else:
-            v0 = self.nodo(None)
-            vector = [0]*len(self.jugadores)
-            v0.q = vector
-            t0 = time.time()
-            while( time.time() - t0 < self.tiempoEjecucion):
-                tree = self.tree_policy(v0,s0,movimientos)
-                v1=tree[0]
-                s1=tree[1]
-                movs=tree[2]
-                delta = self.default_policy(s1,movs,self.jugadores)
-                self.backup(v1,delta,self.jugadores)
-            jugador = s0.jugadorActual-1
-            mejorNodo = self.best_child(v0,0,jugador)
-            if(self.estadisticas):
-                numeroNodosCreados = self.nodos_creados(v0)
-                print("\nTiempo de ejecución: ", self.tiempoEjecucion)
-                print("Número de nodos creados: ",numeroNodosCreados)
-                print("Número de nodos visitados: ",v0.n)
-            mov=mejorNodo.mov
-            return mov
-    
+        resultado = self.analiza(s0)
+        if(self.estadisticas):
+            print("\nTiempo de ejecución: ", resultado.tiempo)
+            print("Número de nodos creados: ", resultado.nodos)
+            print("Número de nodos visitados: ", resultado.iteraciones)
+        return resultado.movimiento
+
     def tree_policy(self, v,s,movimientos):
         while(self.es_estado_final(s)==False):
+            _comprueba_movimientos(movimientos, s)
             movs_sin_visitar = self.movs_restantes(v,movimientos)
             if(0<len(movs_sin_visitar)):
                 return self.expand(v,s,movs_sin_visitar)
@@ -86,56 +195,41 @@ class MCTS:
 
     def expand(self, v,s,movRestantes):
         copiaEstado=deepcopy(s)
-        mov = random.choice(movRestantes)
+        mov = self.rng.choice(movRestantes)
         s = self.aplicar_movimiento(copiaEstado, mov)
         movs = self.obtener_movimientos(s)
         hijo = self.nodo(v,mov)
-        vector = [0]*len(v.q)
-        hijo.q = vector
+        hijo.q = [0]*len(v.q)
         v.hijos.append(hijo)
         return [hijo,s,movs]
 
     @staticmethod
     def best_child(v,c,jugador):
-        indiceMejorHijo=0
-        contador=0
-        max=-math.inf
+        #UCT: Q(v')/N(v') + c * sqrt(2 ln N(v) / N(v'))
+        mejorHijo = None
+        maximo = -math.inf
         for hijo in v.hijos:
             heuristica = hijo.q[jugador]/hijo.n + (c * math.sqrt((2*math.log(v.n))/hijo.n))
-            if(heuristica>max):
-                max = heuristica
-                indiceMejorHijo=contador
-            contador+=1
-        return v.hijos[indiceMejorHijo]
+            if(heuristica>maximo):
+                maximo = heuristica
+                mejorHijo = hijo
+        return mejorHijo
 
     def default_policy(self, s,movs,jugadores):
-        #El jugador que queremos comprobar es el anterior al del estado actual, ya que se ha cambiado en tree_policy
         while(self.es_estado_final(s)==False):
-            a = random.choice(movs)
+            _comprueba_movimientos(movs, s)
+            a = self.rng.choice(movs)
             s = self.aplicar_movimiento(s,a)
             movs = self.obtener_movimientos(s)
-
-        #Crea una lista de 0s del tamaño de la lista de jugadores
-        res = [0] * len(jugadores)
-        #Cambia los valores de la lista de 0s a la recompensa que obtiene cada jugador
-        for jugador in jugadores:
-            if(self.gana_jugador(s,jugador)):
-                res[jugadores.index(jugador)]=1
-
-        #Si no hay ningún ganador, todos los jugadores empatan
-        if (1 not in res):
-            res = [0.5] * len(jugadores)
-        return res
+        return _recompensa(self.gana_jugador, s, jugadores)
 
     @staticmethod
     def backup(v,delta,jugadores):
-        while(v != None):
+        while(v is not None):
             v.n = v.n+1
-            #Incrementa la recompensa del nodo para cada jugador
-            for jugador in jugadores:
-                v.q[jugadores.index(jugador)]+=delta[jugadores.index(jugador)]
+            for i in range(len(jugadores)):
+                v.q[i]+=delta[i]
             v = v.padre
-
 
 
 # Adapting ConnectX to pyplAI style

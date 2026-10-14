@@ -1,4 +1,5 @@
 import os
+import sys
 import math
 import shutil
 import numpy as np
@@ -22,8 +23,9 @@ from torch.utils.tensorboard import SummaryWriter
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
-from env.connectXgym import ConnectXGym, check_winning_move, apply_mask_to_logits
-from pyplAI_algorithms import minimax_lite_agent
+from env.connectXgym import (ConnectXGym, apply_mask_to_distribution, check_winning_move,
+                             expected_q_values)
+from training_algorithms.pyplAI_algorithms import minimax_lite_agent
 
 
 
@@ -105,7 +107,7 @@ class RainbowCNN(nn.Module):
             NoisyLinear(self.flatten_dim, 512), nn.ReLU(),
             NoisyLinear(512, action_shape * num_atoms))
 
-    def forward(self, obs, state=None, info={}):
+    def forward(self, obs, state=None, info=None):
         if not isinstance(obs, torch.Tensor):
             obs = torch.tensor(obs, dtype=torch.float, device=self.device)
         
@@ -117,12 +119,11 @@ class RainbowCNN(nn.Module):
         value = self.value_stream(features).view(batch_size, 1, self.num_atoms)
         advantage = self.advantage_stream(features).view(batch_size, self.action_shape, self.num_atoms)
         logits = value + advantage - advantage.mean(dim=1, keepdim=True)
+        probs = logits.softmax(dim=2)
 
         # Apply action mask for invalid actions
         if info is not None and "action_mask" in info:
-            logits = apply_mask_to_logits(logits, info["action_mask"], self.device)
-
-        probs = logits.softmax(dim=2)
+            probs = apply_mask_to_distribution(probs, info["action_mask"], self.device)
 
         return probs, state
 
@@ -171,15 +172,12 @@ class RainbowAgent:
             mask_bool[col] = True
         mask_tensor = torch.tensor(mask_bool, dtype=torch.bool).to(self.device).unsqueeze(0)
         
+        # The network returns probabilities (already softmaxed): no second softmax here
         with torch.no_grad():
-            logits, _ = self.model(state_tensor, info={"action_mask": mask_tensor})
-            probs = F.softmax(logits, dim=2)
-            q_values = (probs * self.support).sum(dim=2)
+            probs, _ = self.model(state_tensor, info={"action_mask": mask_tensor})
+            q_values = expected_q_values(probs, self.support, mask_tensor)
             best_move = int(torch.argmax(q_values).item())
-        
-        if best_move not in valid_moves:
-            best_move = int(np.random.choice(valid_moves))
-        
+
         return best_move
 
 
@@ -211,7 +209,6 @@ def train_rainbow_self_play():
     NUM_ATOMS = 101
     V_MIN = -30
     V_MAX = 30
-    NOISY_STD = 0.5
 
     ALPHA = 0.6
     BETA_START = 0.4
@@ -304,7 +301,7 @@ def train_rainbow_self_play():
 
     logger = TensorboardLogger(SummaryWriter(log_path))
  
-    result = algorithm.run_training(OffPolicyTrainerParams(
+    algorithm.run_training(OffPolicyTrainerParams(
                                         training_collector=train_collector, test_collector=test_collector, test_step_num_episodes=TEST_EPISODES,
                                         max_epochs=TOTAL_EPOCHS, epoch_num_steps=STEP_PER_EPOCH, batch_size=BATCH_SIZE, logger=logger,
                                         collection_step_num_env_steps=STEP_PER_COLLECT, update_step_num_gradient_steps_per_sample=UPDATE_PER_COLLECT,

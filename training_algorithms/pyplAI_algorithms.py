@@ -1,5 +1,4 @@
 import time
-import random
 import pyplAI
 
 # Adapting ConnectX to pyplAI
@@ -148,12 +147,14 @@ def minimax_agent(observation, configuration):
     current_board = observation.board
     current_player = observation.mark
         
-    pyplai_state = ConnectXState(current_board, current_player, total_limit_time)
+    pyplai_state = ConnectXState(current_board, current_player, turn_deadline)
     
     valid_moves = pyplai_state.get_moves()
     best_move = valid_moves[len(valid_moves)//2] if valid_moves else None
 
-    for depth in range(1, 5):   
+    # pyplAI >= 1.1.0 explores exactly `depth` plies (1.0.3 explored one more), so 2..5 keeps
+    # the strength of the original 1..4 iterative deepening
+    for depth in range(2, 6):
         try:
             
             if time.time() > turn_deadline:
@@ -207,7 +208,8 @@ def mcts_agent(observation, configuration):
 
 # Lite minimax agent with CONNECT X adapted for training
 def minimax_lite_agent(observation, configuration):
-    depth = 2
+    # 3 plies in pyplAI >= 1.1.0 is the old depth 2 of pyplAI 1.0.3
+    depth = 3
 
     current_board = observation.board
     current_player = observation.mark

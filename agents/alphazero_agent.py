@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
-import sys
 import time
 import math
 
@@ -16,7 +15,7 @@ class dotdict(dict):
         try:
             return self[name]
         except KeyError:
-            raise AttributeError(name)
+            raise AttributeError(name) from None
 
 # --- GAME ---
 class Connect4Game:
@@ -238,8 +237,11 @@ class MCTS:
 
     def getActionProb(self, canonicalBoard, temp=1, time_limit_sec=None):
         """
-        Executes simulations until time limit is reached and returns the action probabilities.
+        Executes simulations until time limit is reached and returns the action probabilities
+        and the number of simulations run. ``time_limit_sec`` defaults to ``TIME_LIMIT``.
         """
+        if time_limit_sec is None:
+            time_limit_sec = TIME_LIMIT
         start_time = time.time()
         sims = 0
 
@@ -261,9 +263,9 @@ class MCTS:
         # Apply temperature
         # Competitive (Deterministic)
         if temp == 0:
-            best_counts = [c if valid else -1 for c, valid in zip(counts, valid_moves)]
+            best_counts = np.where(valid_moves == 1, counts, -1)
 
-            bestAs = np.array(np.argwhere(best_counts == np.max(best_counts))).flatten()
+            bestAs = np.flatnonzero(best_counts == best_counts.max())
             bestA = np.random.choice(bestAs)
             probs = [0] * len(counts)
             probs[bestA] = 1
@@ -272,16 +274,16 @@ class MCTS:
         # Exploration (Stochastic)
         # If temp > 0, normalize the visits to obtain a distribution
         counts = [x ** (1. / temp) for x in counts]
-        counts = [c * v for c, v in zip(counts, valid_moves)]
+        counts = [c * v for c, v in zip(counts, valid_moves, strict=True)]
         counts_sum = float(sum(counts))
 
         if counts_sum == 0:
             total_valid_moves = np.sum(valid_moves)
             if total_valid_moves > 0:
                 probs = [1/total_valid_moves if valid else 0 for valid in valid_moves]
-                return probs
+                return probs, sims
             else:
-                return [1/len(counts)] * len(counts)
+                return [1/len(counts)] * len(counts), sims
 
         probs = [x / counts_sum for x in counts]
         return probs, sims
@@ -347,17 +349,20 @@ class MCTS:
             cur_best = -float('inf')
 
             # PUCT Formula: U(s,a) = Q(s,a) + cpuct * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
+            # Unvisited edges have no Q and are ranked by the prior alone. The epsilon inside the
+            # sqrt (as in alpha-zero-general) keeps that ranking when N(s) is still 0; adding it
+            # outside would make every unvisited edge tie and the first valid column win.
             cpuct = self.args.cpuct
-            sqrt_Ns = math.sqrt(self.Ns[s])
+            sqrt_Ns = math.sqrt(self.Ns[s] + 1e-8)
 
             valid_inds = np.where(valid_moves)[0]
             for a in valid_inds:
-                qsa = self.Qsa.get((s, a), a)
+                qsa = self.Qsa.get((s, a))
                 if qsa is not None:
-                    nsa = self.Nsa.get((s, a), 0)
+                    nsa = self.Nsa[(s, a)]
                     u = qsa + cpuct * ps[a] * sqrt_Ns / (1 + nsa)
                 else:
-                    u = cpuct * ps[a] * sqrt_Ns + 1e-8 
+                    u = cpuct * ps[a] * sqrt_Ns
 
                 if u > cur_best:
                     cur_best = u
@@ -418,16 +423,6 @@ class MCTS:
                 
         return None
     
-    def _check_win(self, board, player, valid_moves):
-        """
-        Simulates placing a piece in each valid column and checks for a win.
-        """
-        valid_cols = np.where(valid_moves)[0]
-        for col in valid_cols:
-            temp_board, _ = self.game.get_next_state(board, player, col)
-            if self.game.check_win_fast(temp_board, player):
-                return col
-        return None
 
 # --- CONFIGURATION ---
 MODEL_FILENAME = 'AlphaZero.pth'
@@ -461,7 +456,7 @@ def load_model():
         raw_nnet.load_state_dict(model)
         raw_nnet.to(DEVICE)
         raw_nnet.eval()
-        nnet = torch.quantization.quantize_dynamic(raw_nnet, {nn.Linear}, dtype=torch.qint8, inplace=True)
+        torch.quantization.quantize_dynamic(raw_nnet, {nn.Linear}, dtype=torch.qint8, inplace=True)
         dummy_input = torch.randn(1, 3, 6, 7)
         traced_nnet = torch.jit.trace(raw_nnet, dummy_input)
         final_nnet = NNetWrapper(traced_nnet)

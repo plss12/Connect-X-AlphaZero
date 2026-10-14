@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import numpy as np
 from tqdm import tqdm
@@ -7,7 +8,6 @@ matplotlib.use('Agg')
 
 from tianshou.algorithm.modelfree.ppo import PPO
 from tianshou.algorithm.modelfree.reinforce import DiscreteActorPolicy
-from tianshou.utils.net.discrete import DiscreteActor, DiscreteCritic
 from tianshou.algorithm.optim import AdamOptimizerFactory, LRSchedulerFactoryLinear
 from tianshou.trainer import OnPolicyTrainerParams
 from tianshou.data import Collector, VectorReplayBuffer
@@ -22,11 +22,11 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.append(project_root)
 from env.connectXgym import ConnectXGym, apply_mask_to_logits, check_winning_move
-from pyplAI_algorithms import minimax_lite_agent
+from training_algorithms.pyplAI_algorithms import minimax_lite_agent
 
 
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+def layer_init(layer, std=2 ** 0.5, bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
@@ -48,7 +48,7 @@ class FeatureExtractor(nn.Module):
 
         self.output_dim = 128 * h * w 
 
-    def forward(self, obs, state=None, info={}):
+    def forward(self, obs, state=None, info=None):
         if not isinstance(obs, torch.Tensor):
             obs = torch.tensor(obs, dtype=torch.float, device=self.device)
         return self.conv(obs), state
@@ -63,7 +63,7 @@ class Actor(nn.Module):
         self.last_layer = layer_init(nn.Linear(preprocess_net.output_dim, action_shape), std=0.01)
         self.device = device
         
-    def forward(self, obs, state=None, info={}):
+    def forward(self, obs, state=None, info=None):
         features, _ = self.preprocess_net(obs, state)
         logits = self.last_layer(features)
         logits = torch.clamp(logits, min=-10, max=10)
@@ -84,7 +84,7 @@ class Critic(nn.Module):
         self.last_layer = layer_init(nn.Linear(preprocess_net.output_dim, 1), std=1.0)
         self.device = device
         
-    def forward(self, obs, state=None, info={}):
+    def forward(self, obs, state=None, info=None):
         features, _ = self.preprocess_net(obs, state)
         value = self.last_layer(features)
         return value
@@ -247,7 +247,7 @@ def train_ppo_self_play():
 
     logger = TensorboardLogger(SummaryWriter(log_path))
  
-    result = algorithm.run_training(OnPolicyTrainerParams(
+    algorithm.run_training(OnPolicyTrainerParams(
                     training_collector=train_collector, test_collector=test_collector,
                     max_epochs=TOTAL_EPOCHS, epoch_num_steps=STEP_PER_EPOCH, collection_step_num_env_steps=STEP_PER_COLLECT, 
                     update_step_num_repetitions=UPDATE_PER_COLLECT, test_step_num_episodes=TEST_EPISODES, logger=logger, 

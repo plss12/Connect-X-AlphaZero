@@ -2,3 +2,15 @@
 __pycache__
 
 *.pth
+*.pth.tar
+*.examples
+
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Training outputs
+alphazero/files/
+files_ppo/
+files_rainbow/
+models/

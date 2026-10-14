@@ -44,7 +44,7 @@ class ConnectXGym(gym.Env):
         layer_opponent = (board == 2)
         layer_empty = (board == 0)
 
-        return np.stack([layer_me, layer_opponent, layer_empty])
+        return np.stack([layer_me, layer_opponent, layer_empty]).astype(np.float32)
     
     def _get_action_mask(self, board):
         mask = np.ones(self.columns, dtype=bool)
@@ -65,7 +65,8 @@ class ConnectXGym(gym.Env):
 
         self.pair = [None, self.opponent]
 
-        if np.random.random() < self.switch_prob:
+        # Use the env RNG (seeded by reset) so that the player order is reproducible
+        if self.np_random.random() < self.switch_prob:
             self.pair = self.pair[::-1]
             self.trainer = self.env.train(self.pair)
         else:
@@ -90,8 +91,9 @@ class ConnectXGym(gym.Env):
             # Win reward
             if reward == 1:
                 reward = 20
-            # Loss reward
-            elif reward == -1:
+            # Loss reward. Kaggle ends the game with reward None after an invalid action
+            # (full column), which must not be scored as a draw
+            elif reward == -1 or reward is None:
                 reward = -20
             # Draw reward
             else:
@@ -147,3 +149,30 @@ def apply_mask_to_logits(logits, mask, device):
         mask = mask.unsqueeze(-1)
 
     return torch.where(mask, logits, -100)
+
+def apply_mask_to_distribution(probs, mask, device):
+    """Masks a C51 value distribution of shape (batch, actions, atoms).
+
+    Masking the logits, as for PPO, leaves invalid actions with a uniform distribution, whose
+    expected value is the middle of the support (0 here). That beats every valid action with a
+    negative expected return. Instead, all the mass of an invalid action goes to the lowest atom,
+    so its Q is v_min and greedy selection does not pick it.
+    """
+    if mask is None:
+        return probs
+
+    mask = torch.as_tensor(mask, dtype=torch.bool, device=device)
+    if mask.dim() == 1:
+        mask = mask.unsqueeze(0)
+
+    lowest_atom = torch.zeros_like(probs)
+    lowest_atom[..., 0] = 1.0
+    return torch.where(mask.unsqueeze(-1), probs, lowest_atom)
+
+def expected_q_values(probs, support, mask=None):
+    """Q(s, a) = sum_z p(z | s, a) * z from the network probabilities; invalid actions get -inf."""
+    q_values = (probs * support).sum(dim=-1)
+    if mask is not None:
+        mask = torch.as_tensor(mask, dtype=torch.bool, device=q_values.device)
+        q_values = q_values.masked_fill(~mask, float('-inf'))
+    return q_values
