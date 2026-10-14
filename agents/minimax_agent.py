@@ -1,91 +1,141 @@
-import time
-import random
-import math
-from copy import deepcopy
+# Kaggle submissions cannot install pyplAI, so the Minimax algorithm is vendored below verbatim from
+# pyplAI v1.1.0 (https://github.com/plss12/pyplAI/blob/v1.1.0/pyplAI/Algoritmos.py).
+# tests/test_pyplai_sync.py checks that it still matches the installed pyplAI.
+from __future__ import annotations
 
-# Kaggle does not allow to use pyplAI, so we copy minimax code here
+import math
+import time
+from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Any, List
+
+#Valor de una victoria en Minimax. Las heurísticas deben devolver valores de menor magnitud
+VICTORIA = 1e9
+
+
+@dataclass
+class EvaluacionMovimiento:
+    """Evaluación de un movimiento de la raíz tras la búsqueda."""
+    movimiento: Any
+    #Número de visitas del nodo (0 en Minimax, que no muestrea)
+    visitas: int
+    #Recompensa media del jugador que mueve en MCTS e ISMCTS (entre 0 y 1) o valor minimax
+    valor: float
+
+
+@dataclass
+class ResultadoAnalisis:
+    """Resultado de analizar un estado: movimiento elegido y ranking de todos los movimientos."""
+    movimiento: Any
+    #Movimientos ordenados de mejor a peor según el criterio de elección del algoritmo
+    movimientos: List[EvaluacionMovimiento] = field(default_factory=list)
+    #Iteraciones de búsqueda (Monte Carlo) o estados evaluados (Minimax)
+    iteraciones: int = 0
+    nodos: int = 0
+    tiempo: float = 0.0
+
+
+def _comprueba_movimientos(movimientos: list, estado: Any) -> None:
+    if len(movimientos) == 0:
+        raise ValueError(
+            "El estado no es final pero no tiene movimientos posibles. Todo estado no final "
+            "debe tener al menos un movimiento (estado: " + repr(estado) + ")")
+
+
 class Minimax:
+    """Minimax con poda alfa-beta (Knuth y Moore, 1975).
+
+    Con más de dos jugadores es paranoico: el resto de jugadores minimiza el valor del jugador
+    que busca. profundidadBusqueda es el número de niveles (jugadas) que se exploran.
+    """
+
     def __init__(self, aplicar_movimiento, obtener_movimientos, es_estado_final, gana_jugador, heuristica, numeroJugadores, profundidadBusqueda, estadisticas=False):
-        self.aplicar_movimiento = staticmethod(aplicar_movimiento)
-        self.obtener_movimientos = staticmethod(obtener_movimientos)
-        self.es_estado_final = staticmethod(es_estado_final)
-        self.gana_jugador = staticmethod(gana_jugador)
-        self.heuristica = staticmethod(heuristica)
+        if profundidadBusqueda < 1:
+            raise ValueError("profundidadBusqueda debe ser un entero mayor que 0")
+        self.aplicar_movimiento = aplicar_movimiento
+        self.obtener_movimientos = obtener_movimientos
+        self.es_estado_final = es_estado_final
+        self.gana_jugador = gana_jugador
+        self.heuristica = heuristica
         self.jugadores = [i+1 for i in range(numeroJugadores)]
         self.profundidadBusqueda = profundidadBusqueda
         self.estadisticas = estadisticas
 
-    def evaluate(self,estado,jugadorMax):
+    def evaluate(self,estado,jugadorMax,nivel=0):
+        #Las victorias valen más cuanto antes llegan y las derrotas, cuanto más tarde
         if(self.es_estado_final(estado)):
             for jugador in self.jugadores:
                 if(self.gana_jugador(estado,jugador)):
                     if(jugador==jugadorMax):
-                        return math.inf
+                        return VICTORIA - nivel
                     else:
-                        return -math.inf
+                        return -VICTORIA + nivel
             return 0
         return self.heuristica(estado,jugadorMax)
 
-    def minimax(self, estado, depth, movMax, jugadorMax, profundidadBusqueda, alpha, beta, estadosEvaluados):
+    def alfabeta(self, estado, nivel, jugadorMax, alpha, beta, contador):
+        """Valor minimax de estado, situado a nivel jugadas de la raíz."""
+        contador[0] += 1
+        if(self.es_estado_final(estado) or nivel>=self.profundidadBusqueda):
+            return self.evaluate(estado,jugadorMax,nivel)
         movs = self.obtener_movimientos(estado)
-        score = self.evaluate(estado,jugadorMax)
-        jugador=estado.jugadorActual
-        newEstado=deepcopy(estado)
-
-        if(self.es_estado_final(estado)):
-            return ((score - depth), movMax, estadosEvaluados)
-
-        if(depth<=profundidadBusqueda):
-            if(jugadorMax==jugador):
-                best = -math.inf
-                for i in range(len(movs)):
-                    s = self.aplicar_movimiento(newEstado,movs[i])
-                    value=self.minimax(s, depth+1, movMax, jugadorMax, profundidadBusqueda, alpha, beta, estadosEvaluados+1)
-                    if(value[0]>best):
-                        movMax=movs[i]
-                    best = max(best, value[0])
-                    alpha = max(alpha, best)
-                    newEstado=deepcopy(estado)
-                    estadosEvaluados=value[2]
-                    if (beta <= alpha):
-                        break
-                return (best, movMax, estadosEvaluados)
-            
-            else:
-                best = math.inf
-                for i in range(len(movs)):
-                    s = self.aplicar_movimiento(newEstado,movs[i])
-                    value=self.minimax(s,  depth+1, movMax, jugadorMax, profundidadBusqueda, alpha, beta, estadosEvaluados+1)
-                    best = min(best,value[0])
-                    beta = min(beta, best)
-                    newEstado=deepcopy(estado)
-                    estadosEvaluados=value[2]
-                    if (beta <= alpha):
-                        break
-                return (best, movMax, estadosEvaluados)
+        _comprueba_movimientos(movs, estado)
+        if(estado.jugadorActual==jugadorMax):
+            best = -math.inf
+            for mov in movs:
+                hijo = self.aplicar_movimiento(deepcopy(estado),mov)
+                best = max(best, self.alfabeta(hijo, nivel+1, jugadorMax, alpha, beta, contador))
+                alpha = max(alpha, best)
+                if(beta<=alpha):
+                    break
         else:
-            return ((score - depth), movMax, estadosEvaluados)
+            best = math.inf
+            for mov in movs:
+                hijo = self.aplicar_movimiento(deepcopy(estado),mov)
+                best = min(best, self.alfabeta(hijo, nivel+1, jugadorMax, alpha, beta, contador))
+                beta = min(beta, best)
+                if(beta<=alpha):
+                    break
+        return best
+
+    def _busca(self, estado, completo):
+        t0 = time.perf_counter()
+        jugadorMax = estado.jugadorActual
+        contador = [1]
+        evaluaciones = []
+        alpha = -math.inf
+        for mov in self.obtener_movimientos(estado):
+            hijo = self.aplicar_movimiento(deepcopy(estado),mov)
+            #Con completo=True cada movimiento se evalúa con ventana completa y su valor es exacto;
+            #si no, los movimientos peores que el mejor encontrado solo se acotan (poda en la raíz)
+            ventana = -math.inf if completo else alpha
+            valor = self.alfabeta(hijo, 1, jugadorMax, ventana, math.inf, contador)
+            evaluaciones.append(EvaluacionMovimiento(mov, 0, valor))
+            alpha = max(alpha, valor)
+        mejor = evaluaciones[0]
+        for evaluacion in evaluaciones:
+            if(evaluacion.valor>mejor.valor):
+                mejor = evaluacion
+        ordenadas = sorted(evaluaciones, key=lambda e: e.valor, reverse=True)
+        return ResultadoAnalisis(mejor.movimiento, ordenadas, contador[0], contador[0], time.perf_counter()-t0)
+
+    def analiza(self, estado):
+        """Valor exacto de cada movimiento de la raíz y movimiento elegido. No imprime nada."""
+        if self.es_estado_final(estado) or len(self.obtener_movimientos(estado)) == 0:
+            return ResultadoAnalisis(None)
+        return self._busca(estado, True)
 
     def ejecuta(self, estado):
-        t0 = time.time()
-        alpha=-math.inf #Maximizar
-        beta=math.inf #Minimizar
-        jugadorMax = estado.jugadorActual
         movs = self.obtener_movimientos(estado)
-        newEstado = deepcopy(estado)
         if(len(movs)==1):
             return movs[0]
-        elif(len(movs)==0):
+        elif(len(movs)==0 or self.es_estado_final(estado)):
             return None
-        else:
-            valores = self.minimax(newEstado, 0, movs[0], jugadorMax, self.profundidadBusqueda, alpha, beta, 1)
-            mov= valores[1]
-            estadosEvaluados = valores[2]
+        resultado = self._busca(estado, False)
         if(self.estadisticas):
-            print("\nTiempo de ejecución: ", time.time()-t0)
-            print("Número de estados evaluados: ", estadosEvaluados)
-        return mov
-
+            print("\nTiempo de ejecución: ", resultado.tiempo)
+            print("Número de estados evaluados: ", resultado.iteraciones)
+        return resultado.movimiento
 
 
 # Adapting ConnectX to pyplAI
@@ -237,7 +287,9 @@ def minimax_agent(observation, configuration):
     valid_moves = pyplai_state.get_moves()
     best_move = valid_moves[len(valid_moves)//2] if valid_moves else None
     
-    for depth in range(1, 5):   
+    # pyplAI >= 1.1.0 explores exactly `depth` plies (1.0.3 explored one more), so 2..5 keeps
+    # the strength of the original 1..4 iterative deepening
+    for depth in range(2, 6):
         try:
             
             if time.time() > turn_deadline:
